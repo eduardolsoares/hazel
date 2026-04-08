@@ -1,59 +1,25 @@
-use js_sys::Object;
-use js_sys::Reflect;
-use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
-use web_sys::console;
+use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = ["__TAURI__", "core"], js_name = invoke)]
-    fn invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
+#[derive(Clone, PartialEq)]
+pub struct Tab {
+    pub id: usize,
+    pub name: String,
+    pub title: String,
+    pub blocks: Vec<Block>,
 }
 
-fn save_file_invoke(content: String, file_path: Option<String>) {
-    let args = Object::new();
-    let _ = Reflect::set(&args, &"content".into(), &content.into());
-    if let Some(path) = &file_path {
-        let _ = Reflect::set(&args, &"filePath".into(), &path.into());
-    }
-
-    let promise = invoke("save_file", args.into());
-
-    let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(
-        Box::new(move |result: JsValue| {
-            if !result.is_null() && !result.is_undefined() {
-                if let Some(path) = result.as_string() {
-                    console::log_1(&format!("File saved to: {}", path).into());
-                }
-            }
-        }) as Box<dyn FnMut(JsValue)>,
-    ));
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq)]
 pub struct Block {
     pub id: usize,
     pub block_type: BlockType,
     pub content: String,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq)]
 pub enum BlockType {
     Paragraph,
-    Title,
     Image,
-    Citation,
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Tab {
-    pub id: usize,
-    pub name: String,
-    pub title: String,
-    pub blocks: Vec<Block>,
-    pub file_path: Option<String>,
-    pub is_dirty: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -85,8 +51,6 @@ impl EditorState {
                     block_type: BlockType::Paragraph,
                     content: String::new(),
                 }],
-                file_path: None,
-                is_dirty: false,
             }],
             active_tab_id: 0,
             next_tab_id: 1,
@@ -109,19 +73,9 @@ fn get_slash_options() -> Vec<SlashOption> {
             icon: "¶",
         },
         SlashOption {
-            block_type: BlockType::Title,
-            label: "Title".to_string(),
-            icon: "T",
-        },
-        SlashOption {
             block_type: BlockType::Image,
             label: "Image".to_string(),
             icon: "🖼",
-        },
-        SlashOption {
-            block_type: BlockType::Citation,
-            label: "Citation".to_string(),
-            icon: "📖",
         },
     ]
 }
@@ -129,39 +83,6 @@ fn get_slash_options() -> Vec<SlashOption> {
 #[function_component(App)]
 pub fn app() -> Html {
     let state = use_state(|| EditorState::new());
-    let state_clone = state.clone();
-
-    use_effect(move || {
-        let state = state_clone.clone();
-
-        let handle_keydown = move |e: web_sys::KeyboardEvent| {
-            if e.ctrl_key() && e.key() == "s" {
-                e.prevent_default();
-                let current_state = (*state).clone();
-                if let Some(tab) = current_state
-                    .tabs
-                    .iter()
-                    .find(|t| t.id == current_state.active_tab_id)
-                {
-                    let content = serde_json::to_string(&tab.blocks).unwrap_or_default();
-                    let file_path = tab.file_path.clone();
-                    save_file_invoke(content, file_path);
-                }
-            }
-        };
-
-        let closure =
-            wasm_bindgen::closure::Closure::wrap(Box::new(handle_keydown) as Box<dyn Fn(_)>);
-
-        if let Some(window) = web_sys::window() {
-            window
-                .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
-                .ok();
-        }
-        closure.forget();
-
-        || {}
-    });
 
     let switch_tab = {
         let state = state.clone();
@@ -181,15 +102,13 @@ pub fn app() -> Html {
             new_state.next_tab_id += 1;
             new_state.tabs.push(Tab {
                 id: new_id,
-                name: "novo_documento.md".to_string(),
+                name: "novo_documento.tex".to_string(),
                 title: "Untitled".to_string(),
                 blocks: vec![Block {
                     id: new_state.next_block_id,
                     block_type: BlockType::Paragraph,
                     content: String::new(),
                 }],
-                file_path: None,
-                is_dirty: false,
             });
             new_state.next_block_id += 1;
             new_state.active_tab_id = new_id;
@@ -357,16 +276,12 @@ pub fn block_component(props: &BlockProps) -> Html {
 
     let placeholder = match props.block.block_type {
         BlockType::Paragraph => "Type / for commands, or start writing",
-        BlockType::Title => "Heading 1",
         BlockType::Image => "Click to upload or drag and drop",
-        BlockType::Citation => "Type citation reference (e.g., AUTHOR, 2023)",
     };
 
     let block_type_class = match props.block.block_type {
         BlockType::Paragraph => "block-paragraph",
-        BlockType::Title => "block-title",
         BlockType::Image => "block-image",
-        BlockType::Citation => "block-citation",
     };
 
     html! {
