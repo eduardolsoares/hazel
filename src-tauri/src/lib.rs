@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::DialogExt;
 use std::path::PathBuf;
+use log::info;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SaveResponse {
@@ -13,9 +14,12 @@ pub struct SaveResponse {
 async fn save_markdown(
     app: tauri::AppHandle,
     content: String,
-    file_path: Option<String>,
+    #[allow(non_snake_case)]
+    filePath: Option<String>,
 ) -> Result<SaveResponse, String> {
-    let path = if let Some(path) = file_path {
+    info!("Backend received - content length: {}, filePath: {:?}", content.len(), filePath);
+    
+    let path = if let Some(path) = filePath {
         path
     } else {
         match app
@@ -36,18 +40,25 @@ async fn save_markdown(
         }
     };
 
+    info!("Writing to path: {}", path);
     let pb = PathBuf::from(&path);
-    match std::fs::write(&pb, content.as_bytes()) {
-        Ok(_) => Ok(SaveResponse {
-            success: true,
-            file_path: Some(path),
-            error: None,
-        }),
-        Err(e) => Ok(SaveResponse {
-            success: false,
-            file_path: None,
-            error: Some(e.to_string()),
-        }),
+    match std::fs::write(&pb, &content) {
+        Ok(_) => {
+            info!("File saved successfully!");
+            Ok(SaveResponse {
+                success: true,
+                file_path: Some(path),
+                error: None,
+            })
+        }
+        Err(e) => {
+            info!("Error saving file: {}", e);
+            Ok(SaveResponse {
+                success: false,
+                file_path: None,
+                error: Some(e.to_string()),
+            })
+        }
     }
 }
 

@@ -1,10 +1,12 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use js_sys::Object;
 use js_sys::Reflect;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 use yew::prelude::*;
-
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["__TAURI__", "core"], js_name = invoke)]
@@ -12,19 +14,21 @@ extern "C" {
 }
 
 fn save_markdown_invoke(content: String, file_path: Option<String>) {
-    let args = Object::new();
-    let _ = Reflect::set(&args, &"content".into(), &content.into());
-    if let Some(path) = &file_path {
-        let _ = Reflect::set(&args, &"filePath".into(), &path.into());
-    }
+    web_sys::console::log_1(
+        &format!("Saving content: '{}', length: {}", content, content.len()).into(),
+    );
+
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "content": content,
+        "filePath": file_path
+    }))
+    .unwrap();
 
     let promise = invoke("save_markdown", args.into());
 
     let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(
         Box::new(move |result: JsValue| {
-            if !result.is_null() && !result.is_undefined() {
-                console::log_1(&"File saved".into());
-            }
+            web_sys::console::log_1(&format!("Save result: {:?}", result).into());
         }) as Box<dyn FnMut(JsValue)>,
     ));
 }
@@ -50,7 +54,7 @@ impl Block {
     }
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub enum BlockType {
     Paragraph,
     Heading1,
@@ -206,7 +210,6 @@ impl Buffer {
             }
             current = self.blocks.get(&id).and_then(|b| b.next);
         }
-
         markdown
     }
 }
@@ -234,7 +237,7 @@ pub struct SlashOption {
     pub icon: &'static str,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct EditorState {
     pub tabs: Vec<Tab>,
     pub active_tab_id: usize,
@@ -329,7 +332,67 @@ fn get_slash_options() -> Vec<SlashOption> {
 #[function_component(App)]
 pub fn app() -> Html {
     let state = use_state(|| EditorState::new());
-    let state_clone = state.clone();
+
+    // Use a RefCell wrapped in Rc to share mutable state
+    let state_holder =
+        use_state(|| Rc::new(RefCell::new((*state).clone())) as Rc<RefCell<EditorState>>);
+
+    // Update the holder when state changes
+    {
+        let state_holder = state_holder.clone();
+        let state = state.clone();
+        use_effect(move || {
+            // Clone the state value into the holder when effect runs
+            *state_holder.borrow_mut() = (*state).clone();
+            || {}
+        });
+    }
+
+    // Callback to update both state and holder
+    let update_state = {
+        let state = state.clone();
+        let state_holder = state_holder.clone();
+        Callback::from(move |new_state: EditorState| {
+            state.set(new_state.clone());
+            *state_holder.borrow_mut() = new_state;
+        })
+    };
+
+    let save_callback = {
+        let state_holder = state_holder.clone();
+        Callback::from(move |_| {
+            let current_state = (*state_holder.borrow()).clone();
+            web_sys::console::log_1(&format!("dumping all state").into());
+
+            for (tab_idx, tab) in current_state.tabs.iter().enumerate() {
+                web_sys::console::log_1(
+                    &format!(
+                        "Tab[{}] - id: {}, is_active: {}",
+                        tab_idx,
+                        tab.id,
+                        tab.id == current_state.active_tab_id
+                    )
+                    .into(),
+                );
+                for (bid, block) in &tab.buffer.blocks {
+                    web_sys::console::log_1(
+                        &format!("    Block id: {}, content: '{}'", bid, block.content).into(),
+                    );
+                }
+            }
+
+            if let Some(tab) = current_state
+                .tabs
+                .iter()
+                .find(|t| t.id == current_state.active_tab_id)
+            {
+                let content = tab.buffer.to_markdown();
+                web_sys::console::log_1(&format!("Content to save: '{}'", content).into());
+                let file_path = tab.file_path.clone();
+                save_markdown_invoke(content, file_path);
+            }
+        })
+    };
 
     use_effect(move || {
         use gloo_events::EventListener;
@@ -338,7 +401,7 @@ pub fn app() -> Html {
         static REGISTERED: OnceLock<()> = OnceLock::new();
 
         if REGISTERED.get().is_none() {
-            let state = state_clone.clone();
+            let save = save_callback.clone();
             let _ = REGISTERED.set(());
 
             let listener = EventListener::new(
@@ -348,16 +411,7 @@ pub fn app() -> Html {
                     let e = event.unchecked_ref::<web_sys::KeyboardEvent>();
                     if e.ctrl_key() && e.key() == "s" {
                         e.prevent_default();
-                        let current_state = (*state).clone();
-                        if let Some(tab) = current_state
-                            .tabs
-                            .iter()
-                            .find(|t| t.id == current_state.active_tab_id)
-                        {
-                            let content = tab.buffer.to_markdown();
-                            let file_path = tab.file_path.clone();
-                            save_markdown_invoke(content, file_path);
-                        }
+                        save.emit(());
                     }
                 },
             );
@@ -507,7 +561,7 @@ pub fn app() -> Html {
                                                     }
                                                     state_for_keydown.set(ns);
                                                 })}
-                                                on_change={Callback::from(move |(id, content): (usize, String)| {
+                                            on_change={Callback::from(move |(id, content): (usize, String)| {
                                                     let mut ns = (*state_for_change).clone();
                                                     if let Some(tab) = ns.tabs.iter_mut().find(|t| t.id == ns.active_tab_id) {
                                                         if let Some(block) = tab.buffer.blocks.get_mut(&id) {
@@ -558,12 +612,11 @@ pub fn block_component(props: &BlockProps) -> Html {
         let block_id = props.block.id;
         Callback::from(move |e: InputEvent| {
             if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
-                if let Some(text) = target.text_content() {
-                    if text.contains('/') {
-                        on_slash_detected.emit(());
-                    }
-                    on_change.emit((block_id, text));
+                let text = target.text_content().unwrap_or_default();
+                if text.contains('/') {
+                    on_slash_detected.emit(());
                 }
+                on_change.emit((block_id, text));
             }
         })
     };
