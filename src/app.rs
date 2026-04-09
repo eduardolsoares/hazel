@@ -11,21 +11,19 @@ extern "C" {
     fn invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
 }
 
-fn save_file_invoke(content: String, file_path: Option<String>) {
+fn save_markdown_invoke(content: String, file_path: Option<String>) {
     let args = Object::new();
     let _ = Reflect::set(&args, &"content".into(), &content.into());
     if let Some(path) = &file_path {
         let _ = Reflect::set(&args, &"filePath".into(), &path.into());
     }
 
-    let promise = invoke("save_file", args.into());
+    let promise = invoke("save_markdown", args.into());
 
     let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(
         Box::new(move |result: JsValue| {
             if !result.is_null() && !result.is_undefined() {
-                if let Some(path) = result.as_string() {
-                    console::log_1(&format!("File saved to: {}", path).into());
-                }
+                console::log_1(&"File saved".into());
             }
         }) as Box<dyn FnMut(JsValue)>,
     ));
@@ -36,14 +34,187 @@ pub struct Block {
     pub id: usize,
     pub block_type: BlockType,
     pub content: String,
+    pub prev: Option<usize>,
+    pub next: Option<usize>,
+}
+
+impl Block {
+    pub fn new(id: usize, block_type: BlockType) -> Self {
+        Self {
+            id,
+            block_type,
+            content: String::new(),
+            prev: None,
+            next: None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum BlockType {
     Paragraph,
-    Title,
+    Heading1,
+    Heading2,
+    Heading3,
     Image,
     Citation,
+    CodeBlock,
+    BulletList,
+    NumberedList,
+    Quote,
+    HorizontalRule,
+}
+
+impl Default for Block {
+    fn default() -> Self {
+        Block::new(0, BlockType::Paragraph)
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Buffer {
+    pub head: Option<usize>,
+    pub tail: Option<usize>,
+    pub blocks: std::collections::HashMap<usize, Block>,
+    pub length: usize,
+}
+
+impl Buffer {
+    pub fn new() -> Self {
+        Self {
+            head: None,
+            tail: None,
+            blocks: std::collections::HashMap::new(),
+            length: 0,
+        }
+    }
+
+    pub fn from_blocks(blocks: Vec<Block>) -> Self {
+        let mut buffer = Self::new();
+        let mut prev_id: Option<usize> = None;
+
+        for block in blocks {
+            let id = block.id;
+            if let Some(prev) = prev_id {
+                if let Some(b) = buffer.blocks.get_mut(&prev) {
+                    b.next = Some(id);
+                }
+            } else {
+                buffer.head = Some(id);
+            }
+            buffer.blocks.insert(
+                id,
+                Block {
+                    prev: prev_id,
+                    ..block
+                },
+            );
+            prev_id = Some(id);
+            buffer.length += 1;
+        }
+
+        if let Some(last_id) = prev_id {
+            buffer.tail = Some(last_id);
+        }
+
+        buffer
+    }
+
+    pub fn push_back(&mut self, block: Block) {
+        let id = block.id;
+
+        if let Some(tail_id) = self.tail {
+            if let Some(b) = self.blocks.get_mut(&tail_id) {
+                b.next = Some(id);
+            }
+        } else {
+            self.head = Some(id);
+        }
+
+        self.blocks.insert(
+            id,
+            Block {
+                prev: self.tail,
+                ..block
+            },
+        );
+        self.tail = Some(id);
+        self.length += 1;
+    }
+
+    pub fn to_vec(&self) -> Vec<Block> {
+        let mut result = Vec::new();
+        let mut current = self.head;
+
+        while let Some(id) = current {
+            if let Some(block) = self.blocks.get(&id) {
+                result.push(block.clone());
+            }
+            current = self.blocks.get(&id).and_then(|b| b.next);
+        }
+
+        result
+    }
+
+    pub fn to_markdown(&self) -> String {
+        let mut markdown = String::new();
+        let mut current = self.head;
+
+        while let Some(id) = current {
+            if let Some(block) = self.blocks.get(&id) {
+                match block.block_type {
+                    BlockType::Heading1 => {
+                        markdown.push_str(&format!("# {}\n\n", block.content));
+                    }
+                    BlockType::Heading2 => {
+                        markdown.push_str(&format!("## {}\n\n", block.content));
+                    }
+                    BlockType::Heading3 => {
+                        markdown.push_str(&format!("### {}\n\n", block.content));
+                    }
+                    BlockType::Paragraph => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("{}\n\n", block.content));
+                        }
+                    }
+                    BlockType::Image => {
+                        markdown.push_str(&format!("![{}]({})\n\n", block.content, block.content));
+                    }
+                    BlockType::Citation => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("> {}\n\n", block.content));
+                        }
+                    }
+                    BlockType::CodeBlock => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("```\n{}\n```\n\n", block.content));
+                        }
+                    }
+                    BlockType::BulletList => {
+                        markdown.push_str(&format!("- {}\n", block.content));
+                    }
+                    BlockType::NumberedList => {
+                        markdown.push_str(&format!("1. {}\n", block.content));
+                    }
+                    BlockType::Quote => {
+                        markdown.push_str(&format!("> {}\n\n", block.content));
+                    }
+                    BlockType::HorizontalRule => {
+                        markdown.push_str("---\n\n");
+                    }
+                }
+            }
+            current = self.blocks.get(&id).and_then(|b| b.next);
+        }
+
+        markdown
+    }
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -51,7 +222,7 @@ pub struct Tab {
     pub id: usize,
     pub name: String,
     pub title: String,
-    pub blocks: Vec<Block>,
+    pub buffer: Buffer,
     pub file_path: Option<String>,
     pub is_dirty: bool,
 }
@@ -75,16 +246,15 @@ pub struct EditorState {
 
 impl EditorState {
     pub fn new() -> Self {
+        let mut buffer = Buffer::new();
+        buffer.push_back(Block::new(0, BlockType::Paragraph));
+
         Self {
             tabs: vec![Tab {
                 id: 0,
-                name: "documento.tex".to_string(),
+                name: "Untitled.md".to_string(),
                 title: "Untitled".to_string(),
-                blocks: vec![Block {
-                    id: 0,
-                    block_type: BlockType::Paragraph,
-                    content: String::new(),
-                }],
+                buffer,
                 file_path: None,
                 is_dirty: false,
             }],
@@ -109,9 +279,39 @@ fn get_slash_options() -> Vec<SlashOption> {
             icon: "¶",
         },
         SlashOption {
-            block_type: BlockType::Title,
-            label: "Title".to_string(),
-            icon: "T",
+            block_type: BlockType::Heading1,
+            label: "Heading 1".to_string(),
+            icon: "H1",
+        },
+        SlashOption {
+            block_type: BlockType::Heading2,
+            label: "Heading 2".to_string(),
+            icon: "H2",
+        },
+        SlashOption {
+            block_type: BlockType::Heading3,
+            label: "Heading 3".to_string(),
+            icon: "H3",
+        },
+        SlashOption {
+            block_type: BlockType::BulletList,
+            label: "Bullet List".to_string(),
+            icon: "•",
+        },
+        SlashOption {
+            block_type: BlockType::NumberedList,
+            label: "Numbered List".to_string(),
+            icon: "1.",
+        },
+        SlashOption {
+            block_type: BlockType::Quote,
+            label: "Quote".to_string(),
+            icon: "❝",
+        },
+        SlashOption {
+            block_type: BlockType::CodeBlock,
+            label: "Code Block".to_string(),
+            icon: "</>",
         },
         SlashOption {
             block_type: BlockType::Image,
@@ -119,9 +319,9 @@ fn get_slash_options() -> Vec<SlashOption> {
             icon: "🖼",
         },
         SlashOption {
-            block_type: BlockType::Citation,
-            label: "Citation".to_string(),
-            icon: "📖",
+            block_type: BlockType::HorizontalRule,
+            label: "Horizontal Rule".to_string(),
+            icon: "—",
         },
     ]
 }
@@ -132,33 +332,37 @@ pub fn app() -> Html {
     let state_clone = state.clone();
 
     use_effect(move || {
-        let state = state_clone.clone();
+        use gloo_events::EventListener;
+        use std::sync::OnceLock;
 
-        let handle_keydown = move |e: web_sys::KeyboardEvent| {
-            if e.ctrl_key() && e.key() == "s" {
-                e.prevent_default();
-                let current_state = (*state).clone();
-                if let Some(tab) = current_state
-                    .tabs
-                    .iter()
-                    .find(|t| t.id == current_state.active_tab_id)
-                {
-                    let content = serde_json::to_string(&tab.blocks).unwrap_or_default();
-                    let file_path = tab.file_path.clone();
-                    save_file_invoke(content, file_path);
-                }
-            }
-        };
+        static REGISTERED: OnceLock<()> = OnceLock::new();
 
-        let closure =
-            wasm_bindgen::closure::Closure::wrap(Box::new(handle_keydown) as Box<dyn Fn(_)>);
+        if REGISTERED.get().is_none() {
+            let state = state_clone.clone();
+            let _ = REGISTERED.set(());
 
-        if let Some(window) = web_sys::window() {
-            window
-                .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
-                .ok();
+            let listener = EventListener::new(
+                &web_sys::window().unwrap().unchecked_ref(),
+                "keydown",
+                move |event| {
+                    let e = event.unchecked_ref::<web_sys::KeyboardEvent>();
+                    if e.ctrl_key() && e.key() == "s" {
+                        e.prevent_default();
+                        let current_state = (*state).clone();
+                        if let Some(tab) = current_state
+                            .tabs
+                            .iter()
+                            .find(|t| t.id == current_state.active_tab_id)
+                        {
+                            let content = tab.buffer.to_markdown();
+                            let file_path = tab.file_path.clone();
+                            save_markdown_invoke(content, file_path);
+                        }
+                    }
+                },
+            );
+            listener.forget();
         }
-        closure.forget();
 
         || {}
     });
@@ -179,19 +383,20 @@ pub fn app() -> Html {
             let mut new_state = (*state).clone();
             let new_id = new_state.next_tab_id;
             new_state.next_tab_id += 1;
+
+            let mut buffer = Buffer::new();
+            let block_id = new_state.next_block_id;
+            buffer.push_back(Block::new(block_id, BlockType::Paragraph));
+            new_state.next_block_id += 1;
+
             new_state.tabs.push(Tab {
                 id: new_id,
-                name: "novo_documento.md".to_string(),
+                name: "Untitled.md".to_string(),
                 title: "Untitled".to_string(),
-                blocks: vec![Block {
-                    id: new_state.next_block_id,
-                    block_type: BlockType::Paragraph,
-                    content: String::new(),
-                }],
+                buffer,
                 file_path: None,
                 is_dirty: false,
             });
-            new_state.next_block_id += 1;
             new_state.active_tab_id = new_id;
             state.set(new_state);
         })
@@ -277,7 +482,7 @@ pub fn app() -> Html {
                             </div>
 
                             <div class="blocks">
-                                {for tab.blocks.iter().map(|block| {
+                                {for tab.buffer.to_vec().iter().map(|block| {
                                     let is_menu_target = menu_block_id == Some(block.id);
                                     let block_id = block.id;
                                     let state_for_slash = state_for_blocks.clone();
@@ -357,15 +562,29 @@ pub fn block_component(props: &BlockProps) -> Html {
 
     let placeholder = match props.block.block_type {
         BlockType::Paragraph => "Type / for commands, or start writing",
-        BlockType::Title => "Heading 1",
-        BlockType::Image => "Click to upload or drag and drop",
-        BlockType::Citation => "Type citation reference (e.g., AUTHOR, 2023)",
+        BlockType::Heading1 => "Heading 1",
+        BlockType::Heading2 => "Heading 2",
+        BlockType::Heading3 => "Heading 3",
+        BlockType::BulletList => "Bullet list item",
+        BlockType::NumberedList => "Numbered list item",
+        BlockType::Quote => "Quote",
+        BlockType::CodeBlock => "Code",
+        BlockType::Image => "Image URL",
+        BlockType::HorizontalRule => "",
+        BlockType::Citation => "Citation reference",
     };
 
     let block_type_class = match props.block.block_type {
         BlockType::Paragraph => "block-paragraph",
-        BlockType::Title => "block-title",
+        BlockType::Heading1 => "block-heading-1",
+        BlockType::Heading2 => "block-heading-2",
+        BlockType::Heading3 => "block-heading-3",
+        BlockType::BulletList => "block-bullet-list",
+        BlockType::NumberedList => "block-numbered-list",
+        BlockType::Quote => "block-quote",
+        BlockType::CodeBlock => "block-code",
         BlockType::Image => "block-image",
+        BlockType::HorizontalRule => "block-hr",
         BlockType::Citation => "block-citation",
     };
 
