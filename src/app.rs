@@ -473,10 +473,11 @@ pub fn app() -> Html {
             </div>
 
             <div class="editor-container">
-                {if let Some(tab) = active_tab {
+                {if let Some(tab) = active_tab.clone() {
                     let state_for_blocks = state.clone();
+                    let tab_id = tab.id;
                     html! {
-                        <div class="page">
+                        <div class="page" key={tab_id}>
                             <div class="page-title" contenteditable="true">
                                 {"Untitled"}
                             </div>
@@ -487,6 +488,7 @@ pub fn app() -> Html {
                                     let block_id = block.id;
                                     let state_for_slash = state_for_blocks.clone();
                                     let state_for_keydown = state_for_blocks.clone();
+                                    let state_for_change = state_for_blocks.clone();
                                     html! {
                                         <>
                                             <BlockComponent
@@ -504,6 +506,15 @@ pub fn app() -> Html {
                                                         ns.slash_menu_block_id = None;
                                                     }
                                                     state_for_keydown.set(ns);
+                                                })}
+                                                on_change={Callback::from(move |(id, content): (usize, String)| {
+                                                    let mut ns = (*state_for_change).clone();
+                                                    if let Some(tab) = ns.tabs.iter_mut().find(|t| t.id == ns.active_tab_id) {
+                                                        if let Some(block) = tab.buffer.blocks.get_mut(&id) {
+                                                            block.content = content;
+                                                        }
+                                                    }
+                                                    state_for_change.set(ns);
                                                 })}
                                             />
                                             {if show_menu && is_menu_target {
@@ -536,18 +547,22 @@ pub struct BlockProps {
     pub block: Block,
     pub on_slash_detected: Callback<()>,
     pub on_keydown: Callback<String>,
+    pub on_change: Callback<(usize, String)>,
 }
 
 #[function_component(BlockComponent)]
 pub fn block_component(props: &BlockProps) -> Html {
     let oninput = {
         let on_slash_detected = props.on_slash_detected.clone();
+        let on_change = props.on_change.clone();
+        let block_id = props.block.id;
         Callback::from(move |e: InputEvent| {
             if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
                 if let Some(text) = target.text_content() {
                     if text.contains('/') {
                         on_slash_detected.emit(());
                     }
+                    on_change.emit((block_id, text));
                 }
             }
         })
@@ -597,6 +612,7 @@ pub fn block_component(props: &BlockProps) -> Html {
                 oninput={oninput}
                 onkeydown={onkeydown}
             >
+                {&props.block.content}
             </div>
         </div>
     }

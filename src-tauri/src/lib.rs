@@ -13,21 +13,41 @@ pub struct SaveResponse {
 async fn save_markdown(
     app: tauri::AppHandle,
     content: String,
-) -> Result<bool, String> {
-    let path = app
-        .dialog()
-        .file()
-        .set_file_name("untitled".to_string())
-        .add_filter("Markdown", &["md"])
-        .blocking_save_file();
-
-    match path {
-        Some(file_path) => {
-            let pb = PathBuf::from(file_path.to_string());
-            std::fs::write(&pb, content.as_bytes()).map_err(|e| e.to_string())?;
-            Ok(true)
+    file_path: Option<String>,
+) -> Result<SaveResponse, String> {
+    let path = if let Some(path) = file_path {
+        path
+    } else {
+        match app
+            .dialog()
+            .file()
+            .set_file_name("untitled.md".to_string())
+            .add_filter("Markdown", &["md"])
+            .blocking_save_file()
+        {
+            Some(file_path) => file_path.to_string(),
+            None => {
+                return Ok(SaveResponse {
+                    success: false,
+                    file_path: None,
+                    error: Some("No file selected".to_string()),
+                })
+            }
         }
-        None => Ok(false),
+    };
+
+    let pb = PathBuf::from(&path);
+    match std::fs::write(&pb, content.as_bytes()) {
+        Ok(_) => Ok(SaveResponse {
+            success: true,
+            file_path: Some(path),
+            error: None,
+        }),
+        Err(e) => Ok(SaveResponse {
+            success: false,
+            file_path: None,
+            error: Some(e.to_string()),
+        }),
     }
 }
 
