@@ -1,25 +1,65 @@
+use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::DialogExt;
+use std::path::PathBuf;
+use log::info;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveResponse {
+    pub success: bool,
+    pub file_path: Option<String>,
+    pub error: Option<String>,
+}
 
 #[tauri::command]
-async fn save_file(
+async fn save_markdown(
     app: tauri::AppHandle,
-    file_path: Option<String>
-) -> Result<Option<String>, String> {
-    let path = if let Some(path) = file_path {
+    content: String,
+    #[allow(non_snake_case)]
+    filePath: Option<String>,
+) -> Result<SaveResponse, String> {
+    info!("Backend received - content length: {}, filePath: {:?}", content.len(), filePath);
+    
+    let path = if let Some(path) = filePath {
         path
     } else {
-        let picked_path = app.dialog()
+        match app
+            .dialog()
             .file()
+            .set_file_name("untitled.md".to_string())
             .add_filter("Markdown", &["md"])
-            .set_title("Save File")
-            .blocking_save_file();
-
-        match picked_path {
-            Some(path_buf) => path_buf.to_string(),
-            None => return Ok(None),
+            .blocking_save_file()
+        {
+            Some(file_path) => file_path.to_string(),
+            None => {
+                return Ok(SaveResponse {
+                    success: false,
+                    file_path: None,
+                    error: Some("No file selected".to_string()),
+                })
+            }
         }
     };
-    Ok(Some(path))
+
+    info!("Writing to path: {}", path);
+    let pb = PathBuf::from(&path);
+    match std::fs::write(&pb, &content) {
+        Ok(_) => {
+            info!("File saved successfully!");
+            Ok(SaveResponse {
+                success: true,
+                file_path: Some(path),
+                error: None,
+            })
+        }
+        Err(e) => {
+            info!("Error saving file: {}", e);
+            Ok(SaveResponse {
+                success: false,
+                file_path: None,
+                error: Some(e.to_string()),
+            })
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -27,7 +67,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![save_file])
+        .invoke_handler(tauri::generate_handler![save_markdown])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
