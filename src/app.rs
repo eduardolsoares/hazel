@@ -606,6 +606,8 @@ pub struct BlockProps {
 
 #[function_component(BlockComponent)]
 pub fn block_component(props: &BlockProps) -> Html {
+    let content_ref = use_node_ref();
+
     let oninput = {
         let on_slash_detected = props.on_slash_detected.clone();
         let on_change = props.on_change.clone();
@@ -627,6 +629,21 @@ pub fn block_component(props: &BlockProps) -> Html {
             on_keydown.emit(e.key());
         })
     };
+
+    let block_id = props.block.id;
+    {
+        let content_ref = content_ref.clone();
+        let content = props.block.content.clone();
+        use_effect(move || {
+            if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
+                let current = element.text_content().unwrap_or_default();
+                if current.is_empty() && !content.is_empty() {
+                    element.set_text_content(Some(&content));
+                }
+            }
+            || {}
+        });
+    }
 
     let placeholder = match props.block.block_type {
         BlockType::Paragraph => "Type / for commands, or start writing",
@@ -659,14 +676,13 @@ pub fn block_component(props: &BlockProps) -> Html {
     html! {
         <div class={classes!("block", block_type_class)}>
             <div
+                ref={content_ref}
                 class="block-content"
                 contenteditable="true"
                 data-placeholder={placeholder}
                 oninput={oninput}
                 onkeydown={onkeydown}
-            >
-                {&props.block.content}
-            </div>
+            />
         </div>
     }
 }
