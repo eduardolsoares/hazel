@@ -480,6 +480,16 @@ pub fn app() -> Html {
         })
     };
 
+    let show_slash_menu = {
+        let state = state.clone();
+        Callback::from(move |block_id: usize| {
+            let mut new_state = (*state).clone();
+            new_state.show_slash_menu = true;
+            new_state.slash_menu_block_id = Some(block_id);
+            state.set(new_state);
+        })
+    };
+
     let select_slash_option = {
         let state = state.clone();
         Callback::from(move |_block_type: BlockType| {
@@ -490,8 +500,6 @@ pub fn app() -> Html {
     };
 
     let active_tab = (*state).get_active_tab().cloned();
-    let show_menu = state.show_slash_menu;
-    let menu_block_id = state.slash_menu_block_id;
 
     html! {
         <div class="app">
@@ -528,7 +536,6 @@ pub fn app() -> Html {
 
             <div class="editor-container">
                 {if let Some(tab) = active_tab.clone() {
-                    let state_for_blocks = state.clone();
                     let tab_id = tab.id;
                     html! {
                         <div class="page" key={tab_id}>
@@ -538,40 +545,30 @@ pub fn app() -> Html {
 
                             <div class="blocks">
                                 {for tab.buffer.to_vec().iter().map(|block| {
-                                    let is_menu_target = menu_block_id == Some(block.id);
-                                    let block_id = block.id;
-                                    let state_for_slash = state_for_blocks.clone();
-                                    let state_for_keydown = state_for_blocks.clone();
-                                    let state_for_change = state_for_blocks.clone();
+                                    let is_menu_target = state.show_slash_menu && state.slash_menu_block_id == Some(block.id);
+                                    let hide_slash = hide_slash_menu.clone();
+                                    let state_clone = state.clone();
                                     html! {
                                         <>
                                             <BlockComponent
                                                 block={block.clone()}
-                                                on_slash_detected={Callback::from(move |_| {
-                                                    let mut ns = (*state_for_slash).clone();
-                                                    ns.show_slash_menu = true;
-                                                    ns.slash_menu_block_id = Some(block_id);
-                                                    state_for_slash.set(ns);
-                                                })}
+                                                on_show_slash_menu={show_slash_menu.clone()}
                                                 on_keydown={Callback::from(move |key: String| {
-                                                    let mut ns = (*state_for_keydown).clone();
                                                     if key == "Backspace" {
-                                                        ns.show_slash_menu = false;
-                                                        ns.slash_menu_block_id = None;
+                                                        hide_slash.emit(());
                                                     }
-                                                    state_for_keydown.set(ns);
                                                 })}
-                                            on_change={Callback::from(move |(id, content): (usize, String)| {
-                                                    let mut ns = (*state_for_change).clone();
-                                                    if let Some(tab) = ns.tabs.iter_mut().find(|t| t.id == ns.active_tab_id) {
+                                                on_change={Callback::from(move |(id, content): (usize, String)| {
+                                                    let mut new_state = (*state_clone).clone();
+                                                    if let Some(tab) = new_state.tabs.iter_mut().find(|t| t.id == new_state.active_tab_id) {
                                                         if let Some(block) = tab.buffer.blocks.get_mut(&id) {
                                                             block.content = content;
                                                         }
                                                     }
-                                                    state_for_change.set(ns);
+                                                    state_clone.set(new_state);
                                                 })}
                                             />
-                                            {if show_menu && is_menu_target {
+                                            {if is_menu_target {
                                                 html! {
                                                     <SlashMenu
                                                         options={get_slash_options()}
@@ -599,7 +596,7 @@ pub fn app() -> Html {
 #[derive(Properties, PartialEq)]
 pub struct BlockProps {
     pub block: Block,
-    pub on_slash_detected: Callback<()>,
+    pub on_show_slash_menu: Callback<usize>,
     pub on_keydown: Callback<String>,
     pub on_change: Callback<(usize, String)>,
 }
@@ -609,16 +606,19 @@ pub fn block_component(props: &BlockProps) -> Html {
     let content_ref = use_node_ref();
 
     let oninput = {
-        let on_slash_detected = props.on_slash_detected.clone();
+        let on_show_slash_menu = props.on_show_slash_menu.clone();
         let on_change = props.on_change.clone();
         let block_id = props.block.id;
         Callback::from(move |e: InputEvent| {
             if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
                 let text = target.text_content().unwrap_or_default();
-                if text.contains('/') {
-                    on_slash_detected.emit(());
+                if let Some(input_data) = e.data() {
+                    if input_data == "/" {
+                        on_show_slash_menu.emit(block_id);
+                    } else {
+                        on_change.emit((block_id, text));
+                    }
                 }
-                on_change.emit((block_id, text));
             }
         })
     };
