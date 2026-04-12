@@ -81,6 +81,17 @@ pub enum BlockType {
     NumberedList,
     Quote,
     HorizontalRule,
+    // Estrutura do texto (ABNT)
+    Introducao,
+    Desenvolvimento,
+    Conclusao,
+    // Ambientes abntex2
+    Teorema,
+    Prova,
+    Definicao,
+    Exemplo,
+    Observacao,
+    CitacaoLonga,
 }
 
 impl Default for Block {
@@ -220,6 +231,45 @@ impl Buffer {
                     BlockType::HorizontalRule => {
                         markdown.push_str("---\n\n");
                     }
+                    BlockType::Introducao => {
+                        markdown.push_str(&format!("# Introdução\n\n{}\n\n", block.content));
+                    }
+                    BlockType::Desenvolvimento => {
+                        markdown.push_str(&format!("# Desenvolvimento\n\n{}\n\n", block.content));
+                    }
+                    BlockType::Conclusao => {
+                        markdown.push_str(&format!("# Conclusão\n\n{}\n\n", block.content));
+                    }
+                    BlockType::Teorema => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("::: .theorem\n{}\n:::\n\n", block.content));
+                        }
+                    }
+                    BlockType::Prova => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("::: .proof\n{}\n:::\n\n", block.content));
+                        }
+                    }
+                    BlockType::Definicao => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("::: .definition\n{}\n:::\n\n", block.content));
+                        }
+                    }
+                    BlockType::Exemplo => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("::: .example\n{}\n:::\n\n", block.content));
+                        }
+                    }
+                    BlockType::Observacao => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("::: .observation\n{}\n:::\n\n", block.content));
+                        }
+                    }
+                    BlockType::CitacaoLonga => {
+                        if !block.content.is_empty() {
+                            markdown.push_str(&format!("::: citacao\n{}\n:::\n\n", block.content));
+                        }
+                    }
                 }
             }
             current = self.blocks.get(&id).and_then(|b| b.next);
@@ -247,9 +297,16 @@ pub struct Tab {
 
 #[derive(Clone, PartialEq)]
 pub struct SlashOption {
-    pub block_type: BlockType,
+    pub block_type: Option<BlockType>,
     pub label: String,
     pub icon: &'static str,
+    pub category: Option<String>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct SlashCategory {
+    pub name: String,
+    pub options: Vec<SlashOption>,
 }
 
 use yewdux::prelude::*;
@@ -349,57 +406,136 @@ impl Default for EditorState {
     }
 }
 
-fn get_slash_options() -> Vec<SlashOption> {
+fn get_slash_categories() -> Vec<SlashCategory> {
     vec![
-        SlashOption {
-            block_type: BlockType::Paragraph,
-            label: "Paragraph".to_string(),
-            icon: "¶",
+        SlashCategory {
+            name: "Básico".to_string(),
+            options: vec![
+                SlashOption {
+                    block_type: Some(BlockType::Paragraph),
+                    label: "Parágrafo".to_string(),
+                    icon: "¶",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Heading1),
+                    label: "Título 1".to_string(),
+                    icon: "H1",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Heading2),
+                    label: "Título 2".to_string(),
+                    icon: "H2",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Heading3),
+                    label: "Título 3".to_string(),
+                    icon: "H3",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::BulletList),
+                    label: "Lista com marcadores".to_string(),
+                    icon: "•",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::NumberedList),
+                    label: "Lista numerada".to_string(),
+                    icon: "1.",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Quote),
+                    label: "Citação".to_string(),
+                    icon: "❝",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::CodeBlock),
+                    label: "Código".to_string(),
+                    icon: "</>",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Image),
+                    label: "Imagem".to_string(),
+                    icon: "🖼",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::HorizontalRule),
+                    label: "Linha horizontal".to_string(),
+                    icon: "—",
+                    category: None,
+                },
+            ],
         },
-        SlashOption {
-            block_type: BlockType::Heading1,
-            label: "Heading 1".to_string(),
-            icon: "H1",
+        SlashCategory {
+            name: "Estrutura do Texto".to_string(),
+            options: vec![
+                SlashOption {
+                    block_type: Some(BlockType::Introducao),
+                    label: "Introdução".to_string(),
+                    icon: "#",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Desenvolvimento),
+                    label: "Desenvolvimento".to_string(),
+                    icon: "=",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Conclusao),
+                    label: "Conclusão".to_string(),
+                    icon: "✓",
+                    category: None,
+                },
+            ],
         },
-        SlashOption {
-            block_type: BlockType::Heading2,
-            label: "Heading 2".to_string(),
-            icon: "H2",
-        },
-        SlashOption {
-            block_type: BlockType::Heading3,
-            label: "Heading 3".to_string(),
-            icon: "H3",
-        },
-        SlashOption {
-            block_type: BlockType::BulletList,
-            label: "Bullet List".to_string(),
-            icon: "•",
-        },
-        SlashOption {
-            block_type: BlockType::NumberedList,
-            label: "Numbered List".to_string(),
-            icon: "1.",
-        },
-        SlashOption {
-            block_type: BlockType::Quote,
-            label: "Quote".to_string(),
-            icon: "❝",
-        },
-        SlashOption {
-            block_type: BlockType::CodeBlock,
-            label: "Code Block".to_string(),
-            icon: "</>",
-        },
-        SlashOption {
-            block_type: BlockType::Image,
-            label: "Image".to_string(),
-            icon: "🖼",
-        },
-        SlashOption {
-            block_type: BlockType::HorizontalRule,
-            label: "Horizontal Rule".to_string(),
-            icon: "—",
+        SlashCategory {
+            name: "Ambientes".to_string(),
+            options: vec![
+                SlashOption {
+                    block_type: Some(BlockType::Teorema),
+                    label: "Teorema".to_string(),
+                    icon: "▢",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Prova),
+                    label: "Prova".to_string(),
+                    icon: "∎",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Definicao),
+                    label: "Definição".to_string(),
+                    icon: "≡",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Exemplo),
+                    label: "Exemplo".to_string(),
+                    icon: "ex",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::Observacao),
+                    label: "Observação".to_string(),
+                    icon: "i",
+                    category: None,
+                },
+                SlashOption {
+                    block_type: Some(BlockType::CitacaoLonga),
+                    label: "Citação longa".to_string(),
+                    icon: "❞",
+                    category: None,
+                },
+            ],
         },
     ]
 }
@@ -799,19 +935,21 @@ pub fn app() -> Html {
 
     let select_slash_option = {
         let dispatch = dispatch.clone();
-        Callback::from(move |block_type: BlockType| {
-            dispatch.reduce_mut(move |state| {
-                if let Some(block_id) = state.slash_menu_block_id {
-                    if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
-                        if let Some(block) = tab.buffer.blocks.get_mut(&block_id) {
-                            block.block_type = block_type.clone();
-                            block.content = String::new();
+        Callback::from(move |block_type: Option<BlockType>| {
+            if let Some(bt) = block_type {
+                dispatch.reduce_mut(move |state| {
+                    if let Some(block_id) = state.slash_menu_block_id {
+                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                            if let Some(block) = tab.buffer.blocks.get_mut(&block_id) {
+                                block.block_type = bt.clone();
+                                block.content = String::new();
+                            }
                         }
                     }
-                }
-                state.show_slash_menu = false;
-                state.slash_menu_block_id = None;
-            });
+                    state.show_slash_menu = false;
+                    state.slash_menu_block_id = None;
+                });
+            }
         })
     };
 
@@ -1076,7 +1214,7 @@ pub fn app() -> Html {
                                             {if is_menu_target {
                                                 html! {
                                                     <SlashMenu
-                                                        options={get_slash_options()}
+                                                        categories={get_slash_categories()}
                                                         on_select={select_slash_option.clone()}
                                                         on_close={hide_slash_menu.clone()}
                                                     />
@@ -1419,6 +1557,15 @@ pub fn block_component(props: &BlockProps) -> Html {
         BlockType::Image => "Image URL",
         BlockType::HorizontalRule => "",
         BlockType::Citation => "Citation reference",
+        BlockType::Introducao => "Conteúdo da Introdução",
+        BlockType::Desenvolvimento => "Conteúdo do Desenvolvimento",
+        BlockType::Conclusao => "Conteúdo da Conclusão",
+        BlockType::Teorema => "Conteúdo do Teorema",
+        BlockType::Prova => "Conteúdo da Prova",
+        BlockType::Definicao => "Conteúdo da Definição",
+        BlockType::Exemplo => "Conteúdo do Exemplo",
+        BlockType::Observacao => "Conteúdo da Observação",
+        BlockType::CitacaoLonga => "Citação direta com mais de 3 linhas",
     };
 
     let block_type_class = match props.block.block_type {
@@ -1433,6 +1580,15 @@ pub fn block_component(props: &BlockProps) -> Html {
         BlockType::Image => "block-image",
         BlockType::HorizontalRule => "block-hr",
         BlockType::Citation => "block-citation",
+        BlockType::Introducao => "block-heading-1",
+        BlockType::Desenvolvimento => "block-heading-1",
+        BlockType::Conclusao => "block-heading-1",
+        BlockType::Teorema => "block-quote",
+        BlockType::Prova => "block-quote",
+        BlockType::Definicao => "block-quote",
+        BlockType::Exemplo => "block-quote",
+        BlockType::Observacao => "block-quote",
+        BlockType::CitacaoLonga => "block-quote",
     };
 
     html! {
@@ -1452,66 +1608,71 @@ pub fn block_component(props: &BlockProps) -> Html {
 
 #[derive(Properties, PartialEq)]
 pub struct SlashMenuProps {
-    pub options: Vec<SlashOption>,
-    pub on_select: Callback<BlockType>,
+    pub categories: Vec<SlashCategory>,
+    pub on_select: Callback<Option<BlockType>>,
     pub on_close: Callback<()>,
 }
 
 #[function_component(SlashMenu)]
 pub fn slash_menu(props: &SlashMenuProps) -> Html {
+    let selected_category = use_state(|| 0usize);
     let selected_index = use_state(|| 0usize);
 
     let on_click = {
         let on_select = props.on_select.clone();
         let on_close = props.on_close.clone();
-        Callback::from(move |block_type: BlockType| {
+        Callback::from(move |block_type: Option<BlockType>| {
             on_select.emit(block_type);
             on_close.emit(());
         })
     };
 
+    let categories = &props.categories;
+    let total_categories = categories.len();
+    let active_cat = *selected_category;
+
     {
-        let selected = selected_index.clone();
-        let options_len = props.options.len();
+        let selected_cat = selected_category.clone();
+        let selected_idx = selected_index.clone();
         let on_close = props.on_close.clone();
         let on_select = props.on_select.clone();
-        let options = props.options.clone();
+        let cats = props.categories.clone();
+        let tot_cats = total_categories;
 
         use_effect(move || {
             let handle_keydown = move |e: web_sys::KeyboardEvent| match e.key().as_str() {
+                "ArrowRight" => {
+                    e.prevent_default();
+                    let new_cat = (*selected_cat + 1) % tot_cats;
+                    selected_cat.set(new_cat);
+                    selected_idx.set(0);
+                }
+                "ArrowLeft" => {
+                    e.prevent_default();
+                    let new_cat = if *selected_cat == 0 { tot_cats - 1 } else { *selected_cat - 1 };
+                    selected_cat.set(new_cat);
+                    selected_idx.set(0);
+                }
                 "ArrowDown" => {
                     e.prevent_default();
-                    let new_val = (*selected + 1) % options_len;
-                    selected.set(new_val);
+                    let len = cats[*selected_cat].options.len();
+                    let new_val = (*selected_idx + 1) % len;
+                    selected_idx.set(new_val);
                 }
                 "ArrowUp" => {
                     e.prevent_default();
-                    let new_val = if *selected == 0 {
-                        options_len - 1
-                    } else {
-                        *selected - 1
-                    };
-                    selected.set(new_val);
-                }
-                "Tab" => {
-                    e.prevent_default();
-                    let new_val = if e.shift_key() {
-                        if *selected == 0 {
-                            options_len - 1
-                        } else {
-                            *selected - 1
-                        }
-                    } else {
-                        (*selected + 1) % options_len
-                    };
-                    selected.set(new_val);
+                    let len = cats[*selected_cat].options.len();
+                    let new_val = if *selected_idx == 0 { len - 1 } else { *selected_idx - 1 };
+                    selected_idx.set(new_val);
                 }
                 "Enter" => {
                     e.prevent_default();
-                    let current_idx = *selected;
-                    if current_idx < options.len() {
-                        on_select.emit(options[current_idx].block_type.clone());
-                        on_close.emit(());
+                    let options = &cats[*selected_cat].options;
+                    if *selected_idx < options.len() {
+                        if let Some(bt) = options[*selected_idx].block_type.clone() {
+                            on_select.emit(Some(bt));
+                            on_close.emit(());
+                        }
                     }
                 }
                 "Escape" => {
@@ -1534,23 +1695,53 @@ pub fn slash_menu(props: &SlashMenuProps) -> Html {
         });
     }
 
+    let set_category = {
+        let selected_category = selected_category.clone();
+        let selected_index = selected_index.clone();
+        Callback::from(move |cat_idx: usize| {
+            selected_category.set(cat_idx);
+            selected_index.set(0);
+        })
+    };
+
     html! {
         <div class="slash-menu">
-            <div class="slash-menu-header">{"Basic blocks"}</div>
-            {for props.options.iter().enumerate().map(|(i, option)| {
-                let is_selected = *selected_index == i;
-                let option_block_type = option.block_type.clone();
-                let on_click = on_click.clone();
-                html! {
-                    <div
-                        class={classes!("slash-menu-item", if is_selected { "selected" } else { "" })}
-                        onclick={move |_| on_click.emit(option_block_type.clone())}
-                    >
-                        <span class="slash-menu-icon">{option.icon}</span>
-                        <span class="slash-menu-label">{&option.label}</span>
-                    </div>
-                }
-            })}
+            <div class="slash-menu-categories">
+                {for categories.iter().enumerate().map(|(i, cat)| {
+                    let is_selected = *selected_category == i;
+                    let set_cat = set_category.clone();
+                    html! {
+                        <div
+                            class={classes!("slash-menu-cat", if is_selected { "selected" } else { "" })}
+                            onmouseenter={move |_| set_cat.emit(i)}
+                        >
+                            {&cat.name}
+                        </div>
+                    }
+                })}
+            </div>
+            <div class="slash-menu-items">
+                <div class="slash-menu-items-inner">
+                    {for categories[active_cat].options.iter().enumerate().map(|(i, option)| {
+                        let is_selected = *selected_index == i;
+                        let on_click = on_click.clone();
+                        if let Some(ref bt) = option.block_type {
+                            let option_block_type = bt.clone();
+                            html! {
+                                <div
+                                    class={classes!("slash-menu-item", if is_selected { "selected" } else { "" })}
+                                    onclick={move |_| on_click.emit(Some(option_block_type.clone()))}
+                                >
+                                    <span class="slash-menu-icon">{option.icon}</span>
+                                    <span class="slash-menu-label">{&option.label}</span>
+                                </div>
+                            }
+                        } else {
+                            html! {}
+                        }
+                    })}
+                </div>
+            </div>
         </div>
     }
 }
