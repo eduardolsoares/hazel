@@ -29,6 +29,22 @@ fn save_markdown_invoke(content: String, file_path: Option<String>, default_name
     ));
 }
 
+fn check_pandoc_invoke() -> js_sys::Promise {
+    web_sys::console::log_1(&"Checking pandoc...".into());
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({})).unwrap();
+    invoke("check_pandoc", args.into())
+}
+
+fn export_pdf_invoke(content: String, default_name: Option<String>) -> js_sys::Promise {
+    web_sys::console::log_1(&"Exporting PDF...".into());
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "content": content,
+        "defaultName": default_name
+    }))
+    .unwrap();
+    invoke("export_pdf", args.into())
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
     pub id: usize,
@@ -245,6 +261,17 @@ pub struct EditorState {
     pub show_slash_menu: bool,
     pub slash_menu_block_id: Option<usize>,
     pub focused_block_id: Option<usize>,
+    pub show_save_modal: bool,
+    pub save_modal_filename: String,
+    pub pandoc_available: bool,
+    pub pandoc_version: Option<String>,
+    pub save_modal_export_type: ExportType,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub enum ExportType {
+    Markdown,
+    Pdf,
 }
 
 impl Default for EditorState {
@@ -268,6 +295,11 @@ impl Default for EditorState {
             show_slash_menu: false,
             slash_menu_block_id: None,
             focused_block_id: None,
+            show_save_modal: false,
+            save_modal_filename: "Untitled".to_string(),
+            pandoc_available: false,
+            pandoc_version: None,
+            save_modal_export_type: ExportType::Markdown,
         }
     }
 }
@@ -331,42 +363,140 @@ fn get_slash_options() -> Vec<SlashOption> {
 pub fn app() -> Html {
     let (state, dispatch) = use_store::<EditorState>();
 
+    let open_save_modal = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_: ()| {
+            let state = dispatch.get();
+            if let Some(tab) = state.tabs.iter().find(|t| t.id == state.active_tab_id) {
+                dispatch.reduce_mut(move |state| {
+                    state.show_save_modal = true;
+                    state.save_modal_filename = tab.title.clone();
+                    state.save_modal_export_type = ExportType::Markdown;
+                });
+            }
+        })
+    };
+
+    let close_save_modal = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            dispatch.reduce_mut(move |state| {
+                state.show_save_modal = false;
+            });
+        })
+    };
+
     let save_callback = {
         let dispatch = dispatch.clone();
         Callback::from(move |_| {
             let state = dispatch.get();
-            web_sys::console::log_1(&format!("dumping all state").into());
-
-            for (tab_idx, tab) in state.tabs.iter().enumerate() {
-                web_sys::console::log_1(
-                    &format!(
-                        "Tab[{}] - id: {}, is_active: {}",
-                        tab_idx,
-                        tab.id,
-                        tab.id == state.active_tab_id
-                    )
-                    .into(),
-                );
-                for (bid, block) in &tab.buffer.blocks {
-                    web_sys::console::log_1(
-                        &format!("    Block id: {}, content: '{}'", bid, block.content).into(),
-                    );
-                }
-            }
-
             if let Some(tab) = state.tabs.iter().find(|t| t.id == state.active_tab_id) {
-                let content = tab.buffer.to_markdown();
-                web_sys::console::log_1(&format!("Content to save: '{}'", content).into());
-                let file_path = tab.file_path.clone();
-                let default_name = if tab.file_path.is_none() {
-                    Some(format!("{}.md", tab.title.replace(' ', "_")))
-                } else {
-                    None
-                };
-                save_markdown_invoke(content, file_path, default_name);
+                dispatch.reduce_mut(move |state| {
+                    state.show_save_modal = true;
+                    state.save_modal_filename = tab.title.clone();
+                    state.save_modal_export_type = ExportType::Markdown;
+                });
             }
         })
     };
+
+    let handle_save = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            let state = dispatch.get();
+            if let Some(tab) = state.tabs.iter().find(|t| t.id == state.active_tab_id) {
+                let content = tab.buffer.to_markdown();
+                let filename = state.save_modal_filename.clone();
+
+                if state.save_modal_export_type == ExportType::Markdown {
+                    let file_path = tab.file_path.clone();
+                    let default_name = Some(format!("{}.md", filename.replace(' ', "_")));
+                    save_markdown_invoke(content, file_path, default_name);
+
+                    dispatch.reduce_mut(move |state| {
+                        if let Some(t) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id)
+                        {
+                            t.is_dirty = false;
+                        }
+                        state.show_save_modal = false;
+                    });
+                } else if state.pandoc_available {
+                    let default_name = Some(filename.replace(' ', "_"));
+                    let promise = export_pdf_invoke(content, default_name);
+                    let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(Box::new(
+                        move |result: JsValue| {
+                            web_sys::console::log_1(
+                                &format!("PDF export result: {:?}", result).into(),
+                            );
+                        },
+                    )
+                        as Box<dyn FnMut(JsValue)>));
+
+                    dispatch.reduce_mut(move |state| {
+                        if let Some(t) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id)
+                        {
+                            t.is_dirty = false;
+                        }
+                        state.show_save_modal = false;
+                    });
+                } else {
+                    dispatch.reduce_mut(move |state| {
+                        state.show_save_modal = false;
+                    });
+                }
+            }
+        })
+    };
+
+    let update_modal_filename = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |filename: String| {
+            dispatch.reduce_mut(move |state| {
+                state.save_modal_filename = filename;
+            });
+        })
+    };
+
+    let set_export_type = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |export_type: ExportType| {
+            dispatch.reduce_mut(move |state| {
+                state.save_modal_export_type = export_type;
+            });
+        })
+    };
+
+    let dispatch_for_pandoc = dispatch.clone();
+
+    use_effect(move || {
+        let dispatch = dispatch_for_pandoc.clone();
+        let promise = check_pandoc_invoke();
+        let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(Box::new(
+            move |result: JsValue| {
+                web_sys::console::log_1(&format!("Pandoc check result: {:?}", result).into());
+                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result)
+                {
+                    if let Some(available) = result_obj.get("available").and_then(|v| v.as_bool()) {
+                        let version = result_obj
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        dispatch.reduce_mut(move |state| {
+                            state.pandoc_available = available;
+                            state.pandoc_version = version;
+                        });
+                        if !available {
+                            web_sys::console::log_1(
+                                &"Pandoc not installed. PDF export will not be available.".into(),
+                            );
+                        }
+                    }
+                }
+            },
+        )
+            as Box<dyn FnMut(JsValue)>));
+        || {}
+    });
 
     use_effect(move || {
         use gloo_events::EventListener;
@@ -639,7 +769,14 @@ pub fn app() -> Html {
                                 class={classes!("tab", if is_active { "active" } else { "" })}
                                 onclick={move |_| switch.emit(tab_id)}
                             >
-                                <span class="tab-name">{&tab.name}</span>
+                                <span class="tab-name">
+                                    {if tab.is_dirty {
+                                        html! { <span class="unsaved-indicator">{"●"}</span> }
+                                    } else {
+                                        html! {}
+                                    }}
+                                    {&tab.name}
+                                </span>
                                 <button
                                     class="tab-close"
                                     onclick={move |e: MouseEvent| {
@@ -676,6 +813,7 @@ pub fn app() -> Html {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
                                                 t.name = format!("{}.md", name.replace(' ', "_"));
+                                                t.is_dirty = true;
                                             }
                                         });
                                     }
@@ -688,6 +826,7 @@ pub fn app() -> Html {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
                                                 t.name = format!("{}.md", name.replace(' ', "_"));
+                                                t.is_dirty = true;
                                             }
                                         });
                                     }
@@ -721,6 +860,7 @@ pub fn app() -> Html {
                                                             if let Some(block) = tab.buffer.blocks.get_mut(&id) {
                                                                 block.content = content;
                                                             }
+                                                            tab.is_dirty = true;
                                                         }
                                                     });
                                                 })}
@@ -730,6 +870,7 @@ pub fn app() -> Html {
                                                             if let Some(block) = tab.buffer.blocks.get_mut(&id) {
                                                                 block.content = content;
                                                             }
+                                                            tab.is_dirty = true;
                                                         }
                                                     });
                                                 })}
@@ -760,6 +901,92 @@ pub fn app() -> Html {
                     html! {}
                 }}
             </div>
+
+            {if state.show_save_modal {
+                let _dispatch_for_close = dispatch.clone();
+                let _dispatch_for_save = dispatch.clone();
+                let dispatch_for_filename = dispatch.clone();
+                let dispatch_for_type_md = dispatch.clone();
+                let dispatch_for_type_pdf = dispatch.clone();
+                let filename = state.save_modal_filename.clone();
+                let export_type = state.save_modal_export_type.clone();
+                let pandoc_available = state.pandoc_available;
+                html! {
+                    <div class="modal-overlay">
+                        <div class="modal">
+                            <div class="modal-header">
+                                {"Salvar arquivo"}
+                                <button class="modal-close" onclick={close_save_modal.clone()}>{"×"}</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="modal-input-group">
+                                    <label>{"Nome do arquivo:"}</label>
+                                    <input
+                                        type="text"
+                                        class="modal-input"
+                                        value={filename}
+                                        oninput={Callback::from(move |e: InputEvent| {
+                                            if let Some(target) = e.target_dyn_into::<web_sys::HtmlInputElement>() {
+                                                dispatch_for_filename.reduce_mut(move |state| {
+                                                    state.save_modal_filename = target.value();
+                                                });
+                                            }
+                                        })}
+                                    />
+                                </div>
+                                <div class="modal-radio-group">
+                                    <label class="modal-radio-label">
+                                        <input
+                                            type="radio"
+                                            name="export_type"
+                                            checked={export_type == ExportType::Markdown}
+                                            onchange={Callback::from(move |_| {
+                                                dispatch_for_type_md.reduce_mut(move |state| {
+                                                    state.save_modal_export_type = ExportType::Markdown;
+                                                });
+                                            })}
+                                        />
+                                        <span>{"Markdown (.md)"}</span>
+                                    </label>
+                                    <label class={classes!("modal-radio-label", if !pandoc_available { "disabled" } else { "" })}>
+                                        <input
+                                            type="radio"
+                                            name="export_type"
+                                            checked={export_type == ExportType::Pdf}
+                                            disabled={!pandoc_available}
+                                            onchange={Callback::from(move |_| {
+                                                dispatch_for_type_pdf.reduce_mut(move |state| {
+                                                    state.save_modal_export_type = ExportType::Pdf;
+                                                });
+                                            })}
+                                        />
+                                        <span>{"PDF (ABNT)"}</span>
+                                    </label>
+                                </div>
+                                {if !pandoc_available {
+                                    html! {
+                                        <div class="modal-warning">
+                                            {"⚠ Pandoc não está instalado. Para exportar PDF, instale o Pandoc e o abntex2."}
+                                        </div>
+                                    }
+                                } else {
+                                    html! {}
+                                }}
+                            </div>
+                            <div class="modal-buttons">
+                                <button class="modal-btn modal-btn-cancel" onclick={close_save_modal.clone()}>
+                                    {"Cancelar"}
+                                </button>
+                                <button class="modal-btn modal-btn-save" onclick={handle_save.clone()}>
+                                    {"Salvar"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            } else {
+                html! {}
+            }}
         </div>
     }
 }

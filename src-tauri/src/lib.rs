@@ -2,12 +2,19 @@ use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::DialogExt;
 use std::path::PathBuf;
 use log::info;
+use std::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SaveResponse {
     pub success: bool,
     pub file_path: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PandocCheckResult {
+    pub available: bool,
+    pub version: Option<String>,
 }
 
 #[tauri::command]
@@ -65,12 +72,130 @@ async fn save_markdown(
     }
 }
 
+#[tauri::command]
+async fn check_pandoc() -> PandocCheckResult {
+    info!("Checking pandoc availability...");
+    
+    match std::process::Command::new("pandoc")
+        .arg("--version")
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                let version = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .map(|s| s.to_string());
+                info!("Pandoc available: {:?}", version);
+                PandocCheckResult {
+                    available: true,
+                    version,
+                }
+            } else {
+                info!("Pandoc command failed");
+                PandocCheckResult {
+                    available: false,
+                    version: None,
+                }
+            }
+        }
+        Err(e) => {
+            info!("Pandoc not found: {}", e);
+            PandocCheckResult {
+                available: false,
+                version: None,
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn export_pdf(
+    app: tauri::AppHandle,
+    content: String,
+    #[allow(non_snake_case)]
+    defaultName: Option<String>,
+) -> Result<SaveResponse, String> {
+    info!("Export PDF requested, content length: {}", content.len());
+    
+    let name = defaultName.unwrap_or_else(|| "documento".to_string());
+    let pdf_path = match app
+        .dialog()
+        .file()
+        .set_file_name(format!("{}.pdf", name))
+        .add_filter("PDF", &["pdf"])
+        .blocking_save_file()
+    {
+        Some(path) => path.to_string(),
+        None => {
+            return Ok(SaveResponse {
+                success: false,
+                file_path: None,
+                error: Some("No file selected".to_string()),
+            });
+        }
+    };
+
+    info!("PDF will be saved to: {}", pdf_path);
+
+    let temp_dir = std::env::temp_dir();
+    let temp_md_path = temp_dir.join(format!("hazel_temp_{}.md", std::process::id()));
+    
+    if let Err(e) = fs::write(&temp_md_path, &content) {
+        return Ok(SaveResponse {
+            success: false,
+            file_path: None,
+            error: Some(format!("Failed to create temp file: {}", e)),
+        });
+    }
+
+    let output = std::process::Command::new("pandoc")
+        .arg(temp_md_path.to_string_lossy().to_string())
+        .arg("-o")
+        .arg(&pdf_path)
+        .arg("--template=abntex2")
+        .arg("-V")
+        .arg("lang=pt-BR")
+        .output();
+
+    let _ = fs::remove_file(&temp_md_path);
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                info!("PDF exported successfully to: {}", pdf_path);
+                Ok(SaveResponse {
+                    success: true,
+                    file_path: Some(pdf_path),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                info!("Pandoc error: {}", stderr);
+                Ok(SaveResponse {
+                    success: false,
+                    file_path: None,
+                    error: Some(format!("Pandoc error: {}", stderr)),
+                })
+            }
+        }
+        Err(e) => {
+            info!("Failed to run pandoc: {}", e);
+            Ok(SaveResponse {
+                success: false,
+                file_path: None,
+                error: Some(format!("Failed to run pandoc: {}", e)),
+            })
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![save_markdown])
+        .invoke_handler(tauri::generate_handler![save_markdown, check_pandoc, export_pdf])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
