@@ -591,14 +591,10 @@ pub fn app() -> Html {
             let _ = CHECKED.set(());
 
             wasm_bindgen_futures::spawn_local(async move {
-                web_sys::console::log_1(&"Checking xelatex availability...".into());
                 let promise = check_xelatex_invoke();
                 let result = match wasm_bindgen_futures::JsFuture::from(promise).await {
                     Ok(value) => value,
-                    Err(e) => {
-                        web_sys::console::log_1(&format!("xelatex check error: {:?}", e).into());
-                        return;
-                    }
+                    Err(_) => return,
                 };
 
                 if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result) {
@@ -607,7 +603,6 @@ pub fn app() -> Html {
                             .get("version")
                             .and_then(|v| v.as_str())
                             .map(String::from);
-                        web_sys::console::log_1(&format!("xelatex available: {}, version: {:?}", available, version).into());
                         dispatch.reduce_mut(move |state| {
                             state.xelatex_available = available;
                             state.xelatex_version = version;
