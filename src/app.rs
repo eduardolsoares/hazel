@@ -223,6 +223,7 @@ pub struct Tab {
     pub buffer: Buffer,
     pub file_path: Option<String>,
     pub is_dirty: bool,
+    pub block_order: Vec<usize>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -242,6 +243,7 @@ pub struct EditorState {
     pub next_block_id: usize,
     pub show_slash_menu: bool,
     pub slash_menu_block_id: Option<usize>,
+    pub focused_block_id: Option<usize>,
 }
 
 impl Default for EditorState {
@@ -257,12 +259,14 @@ impl Default for EditorState {
                 buffer,
                 file_path: None,
                 is_dirty: false,
+                block_order: vec![0],
             }],
             active_tab_id: 0,
             next_tab_id: 1,
             next_block_id: 1,
             show_slash_menu: false,
             slash_menu_block_id: None,
+            focused_block_id: None,
         }
     }
 }
@@ -423,6 +427,7 @@ pub fn app() -> Html {
                     buffer,
                     file_path: None,
                     is_dirty: false,
+                    block_order: vec![block_id],
                 });
                 state.active_tab_id = new_id;
             });
@@ -477,6 +482,125 @@ pub fn app() -> Html {
                 }
                 state.show_slash_menu = false;
                 state.slash_menu_block_id = None;
+            });
+        })
+    };
+
+    let handle_enter = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |block_id: usize| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    if let Some(pos) = tab.block_order.iter().position(|&id| id == block_id) {
+                        let new_block_id = state.next_block_id;
+                        state.next_block_id += 1;
+
+                        let new_block = Block::new(new_block_id, BlockType::Paragraph);
+
+                        if let Some(current_block) = tab.buffer.blocks.get_mut(&block_id) {
+                            let next_id = current_block.next;
+                            current_block.next = Some(new_block_id);
+
+                            let mut new_block_with_links = new_block;
+                            new_block_with_links.prev = Some(block_id);
+                            new_block_with_links.next = next_id;
+
+                            tab.buffer.blocks.insert(new_block_id, new_block_with_links);
+
+                            if let Some(nid) = next_id {
+                                if let Some(next_block) = tab.buffer.blocks.get_mut(&nid) {
+                                    next_block.prev = Some(new_block_id);
+                                }
+                            } else {
+                                tab.buffer.tail = Some(new_block_id);
+                            }
+                        }
+
+                        tab.block_order.insert(pos + 1, new_block_id);
+                        state.focused_block_id = Some(new_block_id);
+                    }
+                }
+            });
+        })
+    };
+
+    let handle_up_arrow = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |block_id: usize| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    if let Some(pos) = tab.block_order.iter().position(|&id| id == block_id) {
+                        if pos > 0 {
+                            let prev_id = tab.block_order[pos - 1];
+                            state.focused_block_id = Some(prev_id);
+                        }
+                    }
+                }
+            });
+        })
+    };
+
+    let handle_down_arrow = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |block_id: usize| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    if let Some(pos) = tab.block_order.iter().position(|&id| id == block_id) {
+                        if pos < tab.block_order.len() - 1 {
+                            let next_id = tab.block_order[pos + 1];
+                            state.focused_block_id = Some(next_id);
+                        }
+                    }
+                }
+            });
+        })
+    };
+
+    let handle_backspace = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |block_id: usize| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    if let Some(block) = tab.buffer.blocks.get(&block_id) {
+                        if block.content.is_empty() && tab.block_order.len() > 1 {
+                            if let Some(pos) = tab.block_order.iter().position(|&id| id == block_id)
+                            {
+                                tab.block_order.remove(pos);
+                                tab.buffer.blocks.remove(&block_id);
+                                if pos > 0 {
+                                    state.focused_block_id = Some(tab.block_order[pos - 1]);
+                                } else if !tab.block_order.is_empty() {
+                                    state.focused_block_id = Some(tab.block_order[0]);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        })
+    };
+
+    let handle_delete = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |block_id: usize| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    if let Some(block) = tab.buffer.blocks.get(&block_id) {
+                        if block.content.is_empty() && tab.block_order.len() > 1 {
+                            if let Some(pos) = tab.block_order.iter().position(|&id| id == block_id)
+                            {
+                                tab.block_order.remove(pos);
+                                tab.buffer.blocks.remove(&block_id);
+                                if pos < tab.block_order.len() {
+                                    state.focused_block_id = Some(tab.block_order[pos]);
+                                } else if !tab.block_order.is_empty() {
+                                    state.focused_block_id =
+                                        Some(tab.block_order[tab.block_order.len() - 1]);
+                                }
+                            }
+                        }
+                    }
+                }
             });
         })
     };
@@ -556,6 +680,7 @@ pub fn app() -> Html {
                                     let is_menu_target = state.show_slash_menu && state.slash_menu_block_id == Some(block.id);
                                     let hide_slash = hide_slash_menu.clone();
                                     let dispatch_clone = dispatch.clone();
+                                    let focused_id = state.focused_block_id;
                                     html! {
                                         <>
                                             <BlockComponent
@@ -567,8 +692,10 @@ pub fn app() -> Html {
                                                         hide_slash.emit(());
                                                     }
                                                 })}
-                                                on_change={Callback::from(move |(id, content): (usize, String)| {
-                                                    dispatch_clone.reduce_mut(move |state| {
+                                                on_backspace={handle_backspace.clone()}
+                                                on_delete={handle_delete.clone()}
+                                                on_change={let dispatch2 = dispatch_clone.clone(); Callback::from(move |(id, content): (usize, String)| {
+                                                    dispatch2.reduce_mut(move |state| {
                                                         if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
                                                             if let Some(block) = tab.buffer.blocks.get_mut(&id) {
                                                                 block.content = content;
@@ -576,6 +703,20 @@ pub fn app() -> Html {
                                                         }
                                                     });
                                                 })}
+                                                on_blur={let dispatch2 = dispatch_clone.clone(); Callback::from(move |(id, content): (usize, String)| {
+                                                    dispatch2.reduce_mut(move |state| {
+                                                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                                                            if let Some(block) = tab.buffer.blocks.get_mut(&id) {
+                                                                block.content = content;
+                                                            }
+                                                        }
+                                                    });
+                                                })}
+                                                on_enter={handle_enter.clone()}
+                                                on_up_arrow={handle_up_arrow.clone()}
+                                                on_down_arrow={handle_down_arrow.clone()}
+                                                on_focus={Callback::from(|_| {})}
+                                                focused_block_id={focused_id}
                                             />
                                             {if is_menu_target {
                                                 html! {
@@ -607,7 +748,15 @@ pub struct BlockProps {
     pub block: Block,
     pub on_show_slash_menu: Callback<usize>,
     pub on_keydown: Callback<String>,
+    pub on_backspace: Callback<usize>,
+    pub on_delete: Callback<usize>,
     pub on_change: Callback<(usize, String)>,
+    pub on_blur: Callback<(usize, String)>,
+    pub on_enter: Callback<usize>,
+    pub on_up_arrow: Callback<usize>,
+    pub on_down_arrow: Callback<usize>,
+    pub on_focus: Callback<usize>,
+    pub focused_block_id: Option<usize>,
 }
 
 #[function_component(BlockComponent)]
@@ -617,6 +766,7 @@ pub fn block_component(props: &BlockProps) -> Html {
     let oninput = {
         let on_show_slash_menu = props.on_show_slash_menu.clone();
         let on_change = props.on_change.clone();
+        let on_blur = props.on_blur.clone();
         let block_id = props.block.id;
         Callback::from(move |e: InputEvent| {
             if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
@@ -632,10 +782,83 @@ pub fn block_component(props: &BlockProps) -> Html {
         })
     };
 
+    let onblur = {
+        let on_blur = props.on_blur.clone();
+        let block_id = props.block.id;
+        let content_ref = content_ref.clone();
+        Callback::from(move |_: FocusEvent| {
+            if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
+                let text = element.text_content().unwrap_or_default();
+                on_blur.emit((block_id, text));
+            }
+        })
+    };
+
     let onkeydown = {
+        let on_enter = props.on_enter.clone();
+        let on_up_arrow = props.on_up_arrow.clone();
+        let on_down_arrow = props.on_down_arrow.clone();
+        let on_backspace = props.on_backspace.clone();
+        let on_delete = props.on_delete.clone();
         let on_keydown = props.on_keydown.clone();
+        let block_id = props.block.id;
+        let block_content = props.block.content.clone();
         Callback::from(move |e: KeyboardEvent| {
-            on_keydown.emit(e.key());
+            let key = e.key();
+            if key == "Enter" {
+                e.prevent_default();
+                on_enter.emit(block_id);
+            } else if key == "ArrowUp" {
+                if let Some(selection) =
+                    web_sys::window().and_then(|w| w.get_selection().ok().flatten())
+                {
+                    if let Ok(range) = selection.get_range_at(0) {
+                        if let Ok(start) = range.start_offset() {
+                            let start = start as usize;
+                            if let Some(node) = range.start_container().ok() {
+                                if let Some(content) = node.text_content() {
+                                    if content[..start.min(content.len())].contains('\n') {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                e.prevent_default();
+                on_up_arrow.emit(block_id);
+            } else if key == "ArrowDown" {
+                if let Some(selection) =
+                    web_sys::window().and_then(|w| w.get_selection().ok().flatten())
+                {
+                    if let Ok(range) = selection.get_range_at(0) {
+                        if let Ok(start) = range.start_offset() {
+                            let start = start as usize;
+                            if let Some(node) = range.start_container().ok() {
+                                if let Some(content) = node.text_content() {
+                                    if start < content.len() && content[start..].contains('\n') {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                e.prevent_default();
+                on_down_arrow.emit(block_id);
+            } else if key == "Backspace" {
+                if block_content.is_empty() {
+                    e.prevent_default();
+                    on_backspace.emit(block_id);
+                }
+            } else if key == "Delete" {
+                if block_content.is_empty() {
+                    e.prevent_default();
+                    on_delete.emit(block_id);
+                }
+            } else {
+                on_keydown.emit(key);
+            }
         })
     };
 
@@ -643,11 +866,30 @@ pub fn block_component(props: &BlockProps) -> Html {
     {
         let content_ref = content_ref.clone();
         let content = props.block.content.clone();
+        let block_type = props.block.block_type.clone();
         use_effect(move || {
             if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
                 let current = element.text_content().unwrap_or_default();
-                if current.is_empty() && !content.is_empty() {
+                if content.is_empty() {
+                    if !current.is_empty() {
+                        element.set_text_content(Some(&content));
+                    }
+                } else if current.is_empty() {
                     element.set_text_content(Some(&content));
+                }
+            }
+            || {}
+        });
+    }
+
+    {
+        let content_ref = content_ref.clone();
+        let focused_id = props.focused_block_id;
+        let block_id = props.block.id;
+        use_effect(move || {
+            if focused_id == Some(block_id) {
+                if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
+                    element.focus().ok();
                 }
             }
             || {}
@@ -690,6 +932,7 @@ pub fn block_component(props: &BlockProps) -> Html {
                 contenteditable="true"
                 data-placeholder={placeholder}
                 oninput={oninput}
+                onblur={onblur}
                 onkeydown={onkeydown}
             />
         </div>
@@ -720,6 +963,8 @@ pub fn slash_menu(props: &SlashMenuProps) -> Html {
         let selected = selected_index.clone();
         let options_len = props.options.len();
         let on_close = props.on_close.clone();
+        let on_select = props.on_select.clone();
+        let options = props.options.clone();
 
         use_effect(move || {
             let handle_keydown = move |e: web_sys::KeyboardEvent| match e.key().as_str() {
@@ -736,6 +981,27 @@ pub fn slash_menu(props: &SlashMenuProps) -> Html {
                         *selected - 1
                     };
                     selected.set(new_val);
+                }
+                "Tab" => {
+                    e.prevent_default();
+                    let new_val = if e.shift_key() {
+                        if *selected == 0 {
+                            options_len - 1
+                        } else {
+                            *selected - 1
+                        }
+                    } else {
+                        (*selected + 1) % options_len
+                    };
+                    selected.set(new_val);
+                }
+                "Enter" => {
+                    e.prevent_default();
+                    let current_idx = *selected;
+                    if current_idx < options.len() {
+                        on_select.emit(options[current_idx].block_type.clone());
+                        on_close.emit(());
+                    }
                 }
                 "Escape" => {
                     on_close.emit(());

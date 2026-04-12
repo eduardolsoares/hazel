@@ -193,6 +193,66 @@
   line-height: 1.5;
 }
 
+.block-heading-1 .block-content {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.block-heading-2 .block-content {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 20px;
+  margin-bottom: 6px;
+}
+
+.block-heading-3 .block-content {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-top: 16px;
+  margin-bottom: 4px;
+}
+
+.block-quote .block-content {
+  font-size: 18px;
+  font-style: italic;
+  color: #5a5a5a;
+  border-left: 3px solid #d4d4d4;
+  padding-left: 16px;
+  margin: 8px 0;
+}
+
+.block-code .block-content {
+  font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Code", monospace;
+  font-size: 14px;
+  background-color: #f7f7f7;
+  border-radius: 4px;
+  padding: 16px;
+  white-space: pre-wrap;
+}
+
+.block-bullet-list .block-content::before {
+  content: "•";
+  margin-right: 8px;
+  color: #9b9a97;
+}
+
+.block-numbered-list .block-content {
+  padding-left: 0;
+}
+
+.block-citation .block-content {
+  font-size: 14px;
+  color: #6b6b6b;
+  background-color: #f9f9f9;
+  padding: 8px 12px;
+  border-left: 2px solid #d4d4d4;
+}
+
 .block-image .block-content {
   background-color: #f7f7f7;
   border: 1px dashed #d4d4d4;
