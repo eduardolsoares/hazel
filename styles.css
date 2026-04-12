@@ -216,6 +216,85 @@
   color: var(--text-primary);
 }
 
+/* Dark mode: Horizontal Rule */
+.dark-mode .block-hr .block-content::before {
+  background-color: var(--border-color);
+}
+
+/* Dark mode: ABNT Structure Blocks */
+.dark-mode .block-introducao .block-content,
+.dark-mode .block-desenvolvimento .block-content,
+.dark-mode .block-conclusao .block-content {
+  color: var(--text-primary);
+}
+
+.dark-mode .block-introducao .block-content::before,
+.dark-mode .block-desenvolvimento .block-content::before,
+.dark-mode .block-conclusao .block-content::before {
+  color: var(--accent-warm);
+}
+
+/* Dark mode: abntex2 Environments */
+.dark-mode .block-teorema .block-content {
+  background-color: #1a2a3a;
+  border-left-color: #4a90d9;
+  color: var(--text-primary);
+}
+
+.dark-mode .block-teorema .block-content::before {
+  color: #4a90d9;
+}
+
+.dark-mode .block-prova .block-content {
+  background-color: #1a2a1a;
+  border-left-color: #4ad94a;
+  color: var(--text-primary);
+}
+
+.dark-mode .block-prova .block-content::before {
+  color: #4ad94a;
+}
+
+.dark-mode .block-definicao .block-content {
+  background-color: #2a2a1a;
+  border-left-color: #f0a030;
+  color: var(--text-primary);
+}
+
+.dark-mode .block-definicao .block-content::before {
+  color: #f0a030;
+}
+
+.dark-mode .block-exemplo .block-content {
+  background-color: #2a1a2a;
+  border-left-color: #904ad9;
+  color: var(--text-primary);
+}
+
+.dark-mode .block-exemplo .block-content::before {
+  color: #904ad9;
+}
+
+.dark-mode .block-observacao .block-content {
+  background-color: #2a2a28;
+  border-left-color: var(--accent-warm);
+  color: var(--text-primary);
+}
+
+.dark-mode .block-observacao .block-content::before {
+  color: var(--accent-warm);
+}
+
+.dark-mode .block-citacao-longa .block-content {
+  background-color: #252525;
+  border-left-color: #888888;
+  color: #b0b0a0;
+}
+
+.dark-mode .block-citacao-longa .block-content::before {
+  color: #999999;
+}
+
 .dark-mode .settings-desc {
   color: var(--text-secondary);
 }
@@ -470,6 +549,174 @@
   color: #9b9a97;
   text-align: center;
   padding: 32px;
+}
+
+/* Horizontal Rule */
+.block-hr .block-content {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+}
+
+.block-hr .block-content::before {
+  content: "";
+  width: 100%;
+  height: 2px;
+  background-color: #d8d0c0;
+}
+
+/* ABNT Structure Blocks */
+.block-introducao .block-content,
+.block-desenvolvimento .block-content,
+.block-conclusao .block-content {
+  font-size: 24px;
+  font-weight: 600;
+  color: #4a4538;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.block-introducao .block-content::before {
+  content: "INTRODUÇÃO";
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: #c9a86c;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.block-desenvolvimento .block-content::before {
+  content: "DESENVOLVIMENTO";
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: #c9a86c;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.block-conclusao .block-content::before {
+  content: "CONCLUSÃO";
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  color: #c9a86c;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+/* abntex2 Environments */
+.block-teorema .block-content,
+.block-prova .block-content,
+.block-definicao .block-content,
+.block-exemplo .block-content,
+.block-observacao .block-content,
+.block-citacao-longa .block-content {
+  font-size: 15px;
+  line-height: 1.6;
+  padding: 16px 20px;
+  margin: 8px 0;
+  border-radius: 0 8px 8px 0;
+}
+
+.block-teorema .block-content {
+  background-color: #f0f7ff;
+  border-left: 4px solid #4a90d9;
+}
+
+.block-teorema .block-content::before {
+  content: "Teorema";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #4a90d9;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.block-prova .block-content {
+  background-color: #f7fcf7;
+  border-left: 4px solid #4ad94a;
+}
+
+.block-prova .block-content::before {
+  content: "Prova";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #4ad94a;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.block-definicao .block-content {
+  background-color: #fef8f0;
+  border-left: 4px solid #f0a030;
+}
+
+.block-definicao .block-content::before {
+  content: "Definição";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f0a030;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.block-exemplo .block-content {
+  background-color: #f7f0ff;
+  border-left: 4px solid #904ad9;
+}
+
+.block-exemplo .block-content::before {
+  content: "Exemplo";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #904ad9;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.block-observacao .block-content {
+  background-color: #fffef8;
+  border-left: 4px solid #c9a86c;
+}
+
+.block-observacao .block-content::before {
+  content: "Observação";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c9a86c;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.block-citacao-longa .block-content {
+  background-color: #f9f9f9;
+  border-left: 4px solid #6b6b6b;
+  font-style: italic;
+  color: #5a5a5a;
+}
+
+.block-citacao-longa .block-content::before {
+  content: "Citação";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b6b6b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  font-style: normal;
 }
 
 .slash-menu {
