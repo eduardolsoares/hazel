@@ -248,6 +248,9 @@ async fn load_app_state(app: tauri::AppHandle) -> Result<serde_json::Value, Stri
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
