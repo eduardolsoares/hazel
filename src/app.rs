@@ -8,14 +8,15 @@ extern "C" {
     fn invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
 }
 
-fn save_markdown_invoke(content: String, file_path: Option<String>) {
+fn save_markdown_invoke(content: String, file_path: Option<String>, default_name: Option<String>) {
     web_sys::console::log_1(
         &format!("Saving content: '{}', length: {}", content, content.len()).into(),
     );
 
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({
         "content": content,
-        "filePath": file_path
+        "filePath": file_path,
+        "defaultName": default_name
     }))
     .unwrap();
 
@@ -357,7 +358,12 @@ pub fn app() -> Html {
                 let content = tab.buffer.to_markdown();
                 web_sys::console::log_1(&format!("Content to save: '{}'", content).into());
                 let file_path = tab.file_path.clone();
-                save_markdown_invoke(content, file_path);
+                let default_name = if tab.file_path.is_none() {
+                    Some(format!("{}.md", tab.title.replace(' ', "_")))
+                } else {
+                    None
+                };
+                save_markdown_invoke(content, file_path, default_name);
             }
         })
     };
@@ -658,15 +664,30 @@ pub fn app() -> Html {
                     let tab_title = tab.title.clone();
                     let tab_id_for_title = tab.id;
                     let dispatch_for_title = dispatch.clone();
+                    let dispatch_for_title_blur = dispatch.clone();
                     html! {
                         <div class="page" key={tab_id}>
                             <div class="page-title" contenteditable="true"
-                                onblur={Callback::from(move |e: FocusEvent| {
+                                oninput={Callback::from(move |e: InputEvent| {
                                     if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
                                         let text = target.text_content().unwrap_or_default();
+                                        let name = if text.is_empty() { "Untitled".to_string() } else { text.clone() };
                                         dispatch_for_title.reduce_mut(move |state| {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
+                                                t.name = format!("{}.md", name.replace(' ', "_"));
+                                            }
+                                        });
+                                    }
+                                })}
+                                onblur={Callback::from(move |e: FocusEvent| {
+                                    if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
+                                        let text = target.text_content().unwrap_or_default();
+                                        let name = if text.is_empty() { "Untitled".to_string() } else { text.clone() };
+                                        dispatch_for_title_blur.reduce_mut(move |state| {
+                                            if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
+                                                t.title = text;
+                                                t.name = format!("{}.md", name.replace(' ', "_"));
                                             }
                                         });
                                     }
@@ -803,11 +824,26 @@ pub fn block_component(props: &BlockProps) -> Html {
         let on_keydown = props.on_keydown.clone();
         let block_id = props.block.id;
         let block_content = props.block.content.clone();
+        let on_change = props.on_change.clone();
+        let block_id_for_change = props.block.id;
+        let content_ref_for_change = content_ref.clone();
         Callback::from(move |e: KeyboardEvent| {
             let key = e.key();
             if key == "Enter" {
-                e.prevent_default();
-                on_enter.emit(block_id);
+                if e.shift_key() {
+                    let block_id = block_id_for_change;
+                    let on_change = on_change.clone();
+                    let content_ref = content_ref_for_change.clone();
+                    let _ = gloo_timers::callback::Timeout::new(5, move || {
+                        if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
+                            let text = element.text_content().unwrap_or_default();
+                            on_change.emit((block_id, text));
+                        }
+                    });
+                } else {
+                    e.prevent_default();
+                    on_enter.emit(block_id);
+                }
             } else if key == "ArrowUp" {
                 if let Some(selection) =
                     web_sys::window().and_then(|w| w.get_selection().ok().flatten())
@@ -867,15 +903,18 @@ pub fn block_component(props: &BlockProps) -> Html {
         let content_ref = content_ref.clone();
         let content = props.block.content.clone();
         let block_type = props.block.block_type.clone();
+        let focused_id = props.focused_block_id;
         use_effect(move || {
-            if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
-                let current = element.text_content().unwrap_or_default();
-                if content.is_empty() {
-                    if !current.is_empty() {
+            if focused_id != Some(block_id) {
+                if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
+                    let current = element.text_content().unwrap_or_default();
+                    if content.is_empty() {
+                        if !current.is_empty() {
+                            element.set_text_content(Some(&content));
+                        }
+                    } else if current.is_empty() {
                         element.set_text_content(Some(&content));
                     }
-                } else if current.is_empty() {
-                    element.set_text_content(Some(&content));
                 }
             }
             || {}
