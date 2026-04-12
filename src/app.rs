@@ -635,7 +635,7 @@ pub fn app() -> Html {
                     } else if e.key() == "Escape" {
                         e.prevent_default();
                         dispatch_for_escape.reduce_mut(move |state| {
-                            state.show_settings_modal = true;
+                            state.show_settings_modal = !state.show_settings_modal;
                         });
                     }
                 },
