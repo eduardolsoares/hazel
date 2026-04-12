@@ -326,6 +326,7 @@ pub struct EditorState {
     pub xelatex_version: Option<String>,
     pub save_modal_export_type: ExportType,
     pub show_settings_modal: bool,
+    pub dark_mode: bool,
     pub notification: Option<Notification>,
 }
 
@@ -342,6 +343,7 @@ pub struct EditorStateDto {
     pub next_tab_id: usize,
     pub next_block_id: usize,
     pub show_settings_modal: bool,
+    pub dark_mode: bool,
 }
 
 impl From<&EditorState> for EditorStateDto {
@@ -352,6 +354,7 @@ impl From<&EditorState> for EditorStateDto {
             next_tab_id: state.next_tab_id,
             next_block_id: state.next_block_id,
             show_settings_modal: false,
+            dark_mode: false,
         }
     }
 }
@@ -364,6 +367,7 @@ impl From<EditorStateDto> for EditorState {
         state.next_tab_id = dto.next_tab_id;
         state.next_block_id = dto.next_block_id;
         state.show_settings_modal = dto.show_settings_modal;
+        state.dark_mode = dto.dark_mode;
         state
     }
 }
@@ -401,6 +405,7 @@ impl Default for EditorState {
             xelatex_version: None,
             save_modal_export_type: ExportType::Markdown,
             show_settings_modal: false,
+            dark_mode: false,
             notification: None,
         }
     }
@@ -1087,7 +1092,7 @@ pub fn app() -> Html {
     );
 
     html! {
-        <div class="app">
+        <div class={classes!("app", if state.dark_mode { "dark-mode" } else { "" })}>
             <div class="tab-bar">
                 <div class="tabs">
                     {for state.tabs.iter().map(|tab| {
@@ -1322,6 +1327,7 @@ pub fn app() -> Html {
             {if state.show_settings_modal {
                 let dispatch_for_close = dispatch.clone();
                 let dispatch_for_save_file = dispatch.clone();
+                let dispatch_for_dark_mode = dispatch.clone();
                 let close_settings = Callback::from(move |_: MouseEvent| {
                     dispatch_for_close.reduce_mut(move |state| {
                         state.show_settings_modal = false;
@@ -1338,6 +1344,15 @@ pub fn app() -> Html {
                         });
                     }
                 });
+                let toggle_dark_mode = {
+                    let dispatch = dispatch_for_dark_mode.clone();
+                    Callback::from(move |_: MouseEvent| {
+                        dispatch.reduce_mut(move |state| {
+                            state.dark_mode = !state.dark_mode;
+                        });
+                    })
+                };
+                let is_dark = state.dark_mode;
                 html! {
                     <div class="modal-overlay">
                         <div class="modal settings-modal">
@@ -1351,6 +1366,13 @@ pub fn app() -> Html {
                                         {"Salvar arquivo"}
                                     </button>
                                     <span class="settings-desc">{"Exportar para Markdown ou PDF (ABNT)"}</span>
+                                </div>
+                                <div class="settings-divider"></div>
+                                <div class="settings-option">
+                                    <button class="settings-btn" onclick={toggle_dark_mode}>
+                                        {if is_dark { "Modo Claro" } else { "Modo Escuro" }}
+                                    </button>
+                                    <span class="settings-desc">{"Alternar tema do editor"}</span>
                                 </div>
                             </div>
                         </div>
@@ -1502,6 +1524,8 @@ pub fn block_component(props: &BlockProps) -> Html {
                     e.prevent_default();
                     on_delete.emit(block_id);
                 }
+            } else if key == "ArrowLeft" || key == "ArrowRight" {
+                // Allow default cursor movement
             } else {
                 on_keydown.emit(key);
             }
@@ -1545,28 +1569,8 @@ pub fn block_component(props: &BlockProps) -> Html {
         });
     }
 
-    let placeholder = match props.block.block_type {
-        BlockType::Paragraph => "Type / for commands, or start writing",
-        BlockType::Heading1 => "Heading 1",
-        BlockType::Heading2 => "Heading 2",
-        BlockType::Heading3 => "Heading 3",
-        BlockType::BulletList => "Bullet list item",
-        BlockType::NumberedList => "Numbered list item",
-        BlockType::Quote => "Quote",
-        BlockType::CodeBlock => "Code",
-        BlockType::Image => "Image URL",
-        BlockType::HorizontalRule => "",
-        BlockType::Citation => "Citation reference",
-        BlockType::Introducao => "Conteúdo da Introdução",
-        BlockType::Desenvolvimento => "Conteúdo do Desenvolvimento",
-        BlockType::Conclusao => "Conteúdo da Conclusão",
-        BlockType::Teorema => "Conteúdo do Teorema",
-        BlockType::Prova => "Conteúdo da Prova",
-        BlockType::Definicao => "Conteúdo da Definição",
-        BlockType::Exemplo => "Conteúdo do Exemplo",
-        BlockType::Observacao => "Conteúdo da Observação",
-        BlockType::CitacaoLonga => "Citação direta com mais de 3 linhas",
-    };
+    let show_placeholder = props.block.id == 0 && matches!(props.block.block_type, BlockType::Paragraph);
+    let placeholder = if show_placeholder { "Type / for commands, or start writing" } else { "" };
 
     let block_type_class = match props.block.block_type {
         BlockType::Paragraph => "block-paragraph",
