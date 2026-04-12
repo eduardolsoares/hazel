@@ -34,7 +34,7 @@ async fn save_markdown(
     let path = if let Some(path) = filePath {
         path
     } else {
-        let name = defaultName.unwrap_or_else(|| "untitled".to_string());
+        let name = defaultName.unwrap_or_else(|| "Sem título".to_string());
         match app
             .dialog()
             .file()

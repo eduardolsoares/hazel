@@ -387,8 +387,8 @@ impl Default for EditorState {
         Self {
             tabs: vec![Tab {
                 id: 0,
-                name: "Untitled.md".to_string(),
-                title: "Untitled".to_string(),
+                name: "Sem título.md".to_string(),
+                title: "Sem título".to_string(),
                 buffer,
                 file_path: None,
                 is_dirty: false,
@@ -402,7 +402,7 @@ impl Default for EditorState {
             slash_menu_block_id: None,
             focused_block_id: None,
             show_save_modal: false,
-            save_modal_filename: "Untitled".to_string(),
+            save_modal_filename: "Sem título".to_string(),
             xelatex_available: false,
             xelatex_version: None,
             save_modal_export_type: ExportType::Markdown,
@@ -595,12 +595,12 @@ pub fn app() -> Html {
                     &format!("Serialized state, length: {}", state_json.len()).into(),
                 );
                 let dispatch2 = dispatch.clone();
-                
+
                 wasm_bindgen_futures::spawn_local(async move {
                     web_sys::console::log_1(&"Awaiting save...".into());
                     let promise = save_app_state_invoke(state_json);
                     let result = wasm_bindgen_futures::JsFuture::from(promise).await;
-                    
+
                     match result {
                         Ok(value) => {
                             web_sys::console::log_1(&format!("Save result: {:?}", value).into());
@@ -645,11 +645,11 @@ pub fn app() -> Html {
                     let default_name = Some(format!("{}.md", filename.replace(' ', "_")));
                     let dispatch_for_notify = dispatch.clone();
                     let active_tab_id = state.active_tab_id;
-                    
+
                     wasm_bindgen_futures::spawn_local(async move {
                         let promise = save_markdown_invoke(content, file_path, default_name);
                         let result = wasm_bindgen_futures::JsFuture::from(promise).await;
-                        
+
                         match result {
                             Ok(value) => {
                                 if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
@@ -678,29 +678,29 @@ pub fn app() -> Html {
                             Err(_) => {}
                         }
                     });
-                    
+
                     // Close modal immediately, notification will show async
                 } else if state.xelatex_available {
                     let default_name = Some(filename.replace(' ', "_"));
-                    
+
                     // Use async/await pattern
                     let content_clone = content.clone();
                     let default_name_clone = default_name.clone();
                     let dispatch_for_notify = dispatch.clone();
-                    
+
                     wasm_bindgen_futures::spawn_local(async move {
                         web_sys::console::log_1(&"Starting PDF export async".into());
                         let promise = export_pdf_invoke(content_clone, default_name_clone);
                         let result = wasm_bindgen_futures::JsFuture::from(promise).await;
-                        
+
                         web_sys::console::log_1(&"PDF export async got result".into());
-                        
+
                         match result {
                             Ok(value) => {
                                 if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
                                     let success = result_obj.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
                                     web_sys::console::log_1(&format!("Export success: {}", success).into());
-                                    
+
                                     let notification = if success {
                                         let path = result_obj.get("file_path").and_then(|v| v.as_str())
                                             .map(|s| format!("PDF salvo em: {}", s))
@@ -897,8 +897,8 @@ pub fn app() -> Html {
 
                 state.tabs.push(Tab {
                     id: new_id,
-                    name: "Untitled.md".to_string(),
-                    title: "Untitled".to_string(),
+                    name: "Sem título.md".to_string(),
+                    title: "Sem título".to_string(),
                     buffer,
                     file_path: None,
                     is_dirty: false,
@@ -956,6 +956,7 @@ pub fn app() -> Html {
                                 block.content = String::new();
                             }
                         }
+                        state.focused_block_id = state.slash_menu_block_id;
                     }
                     state.show_slash_menu = false;
                     state.slash_menu_block_id = None;
@@ -1158,7 +1159,7 @@ pub fn app() -> Html {
                                 oninput={Callback::from(move |e: InputEvent| {
                                     if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
                                         let text = target.text_content().unwrap_or_default();
-                                        let name = if text.is_empty() { "Untitled".to_string() } else { text.clone() };
+                                        let name = if text.is_empty() { "Sem título".to_string() } else { text.clone() };
                                         dispatch_for_title.reduce_mut(move |state| {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
@@ -1175,7 +1176,7 @@ pub fn app() -> Html {
                                 onblur={Callback::from(move |e: FocusEvent| {
                                     if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
                                         let text = target.text_content().unwrap_or_default();
-                                        let name = if text.is_empty() { "Untitled".to_string() } else { text.clone() };
+                                        let name = if text.is_empty() { "Sem título".to_string() } else { text.clone() };
                                         dispatch_for_title_blur.reduce_mut(move |state| {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
@@ -1223,9 +1224,9 @@ pub fn app() -> Html {
                                                             let is_same = saved.as_ref()
                                                                 .map(|s| s == &current_content)
                                                                 .unwrap_or(false);
-                                                            web_sys::console::log_1(&format!("on_change: current='{}', saved={:?}, is_same={}", 
-                                                                current_content.len(), 
-                                                                saved.as_ref().map(|s| s.len()), 
+                                                            web_sys::console::log_1(&format!("on_change: current='{}', saved={:?}, is_same={}",
+                                                                current_content.len(),
+                                                                saved.as_ref().map(|s| s.len()),
                                                                 is_same).into());
                                                             tab.is_dirty = !is_same;
                                                         }
@@ -1286,7 +1287,7 @@ pub fn app() -> Html {
                     <div class="modal-overlay">
                         <div class="modal">
                             <div class="modal-header">
-                                {"Salvar arquivo"}
+                                {"exportar arquivo"}
                                 <button class="modal-close" onclick={close_save_modal.clone()}>{"×"}</button>
                             </div>
                             <div class="modal-body">
@@ -1398,16 +1399,16 @@ pub fn app() -> Html {
                             <div class="modal-body">
                                 <div class="settings-option">
                                     <button class="settings-btn" onclick={open_save_modal}>
-                                        {"Salvar arquivo"}
+                                        {"exportar arquivo"}
                                     </button>
-                                    <span class="settings-desc">{"Exportar para Markdown ou PDF (ABNT)"}</span>
+                                    <span class="settings-desc">{"exportar para .md ou .pdf em ABNT"}</span>
                                 </div>
                                 <div class="settings-divider"></div>
                                 <div class="settings-option">
                                     <button class="settings-btn" onclick={toggle_dark_mode}>
-                                        {if is_dark { "Modo Claro" } else { "Modo Escuro" }}
+                                        {if is_dark { "trocar para modo claro" } else { "trocar para modo escuro" }}
                                     </button>
-                                    <span class="settings-desc">{"Alternar tema do editor"}</span>
+                                    <span class="settings-desc">{"alternar tema do editor"}</span>
                                 </div>
                             </div>
                         </div>
@@ -1416,7 +1417,7 @@ pub fn app() -> Html {
             } else {
                 html! {}
             }}
-            
+
             {if let Some(ref n) = state.notification.clone() {
                 html! {
                     <div class={classes!("notification", if n.is_error { "notification-error" } else { "notification-success" })}>
@@ -1463,7 +1464,6 @@ pub fn block_component(props: &BlockProps) -> Html {
                         on_show_slash_menu.emit(block_id);
                     }
                 }
-                // Always emit on_change - handles both typing AND deleting
                 on_change.emit((block_id, text));
             }
         })
@@ -1570,7 +1570,6 @@ pub fn block_component(props: &BlockProps) -> Html {
     {
         let content_ref = content_ref.clone();
         let content = props.block.content.clone();
-        let block_type = props.block.block_type.clone();
         let focused_id = props.focused_block_id;
         use_effect(move || {
             if focused_id != Some(block_id) {
