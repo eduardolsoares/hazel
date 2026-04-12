@@ -293,6 +293,7 @@ pub struct Tab {
     pub file_path: Option<String>,
     pub is_dirty: bool,
     pub block_order: Vec<usize>,
+    pub saved_content: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -392,6 +393,7 @@ impl Default for EditorState {
                 file_path: None,
                 is_dirty: false,
                 block_order: vec![0],
+                saved_content: None,
             }],
             active_tab_id: 0,
             next_tab_id: 1,
@@ -593,36 +595,39 @@ pub fn app() -> Html {
                     &format!("Serialized state, length: {}", state_json.len()).into(),
                 );
                 let dispatch2 = dispatch.clone();
-                let _ = save_app_state_invoke(state_json).then(
-                    &wasm_bindgen::closure::Closure::wrap(Box::new(move |result: JsValue| {
-                        web_sys::console::log_1(
-                            &format!("Save to store result: {:?}", result).into(),
-                        );
-                        if let Ok(result_obj) =
-                            serde_wasm_bindgen::from_value::<serde_json::Value>(result)
-                        {
-                            let success = result_obj
-                                .get("success")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            web_sys::console::log_1(&format!("Save success: {}", success).into());
-                            if success {
-                                web_sys::console::log_1(&"About to clear is_dirty...".into());
-                                dispatch2.reduce_mut(move |state| {
-                                    for tab in state.tabs.iter_mut() {
-                                        web_sys::console::log_1(
-                                            &format!("Setting is_dirty=false for tab {}", tab.id)
-                                                .into(),
-                                        );
-                                        tab.is_dirty = false;
-                                    }
-                                });
-                                web_sys::console::log_1(&"State saved, is_dirty cleared".into());
+                
+                wasm_bindgen_futures::spawn_local(async move {
+                    web_sys::console::log_1(&"Awaiting save...".into());
+                    let promise = save_app_state_invoke(state_json);
+                    let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+                    
+                    match result {
+                        Ok(value) => {
+                            web_sys::console::log_1(&format!("Save result: {:?}", value).into());
+                            if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
+                                let success = result_obj
+                                    .get("success")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                web_sys::console::log_1(&format!("Save success: {}", success).into());
+                                if success {
+                                    dispatch2.reduce_mut(move |state| {
+                                        for tab in state.tabs.iter_mut() {
+                                            let content = tab.buffer.to_markdown();
+                                            web_sys::console::log_1(&format!("Setting saved_content, len={}", content.len()).into());
+                                            tab.saved_content = Some(content);
+                                            tab.is_dirty = false;
+                                        }
+                                    });
+                                    web_sys::console::log_1(&"State saved, is_dirty cleared".into());
+                                }
                             }
                         }
-                    })
-                        as Box<dyn FnMut(JsValue)>),
-                );
+                        Err(e) => {
+                            web_sys::console::log_1(&format!("Save error: {:?}", e).into());
+                        }
+                    }
+                });
             }
         })
     };
@@ -898,6 +903,7 @@ pub fn app() -> Html {
                     file_path: None,
                     is_dirty: false,
                     block_order: vec![block_id],
+                    saved_content: None,
                 });
                 state.active_tab_id = new_id;
             });
@@ -1047,6 +1053,10 @@ pub fn app() -> Html {
                             }
                         }
                     }
+                    let current_content = tab.buffer.to_markdown();
+                    let saved = tab.saved_content.clone();
+                    let is_same = saved.as_ref().map(|s| s == &current_content).unwrap_or(false);
+                    tab.is_dirty = !is_same;
                 }
             });
         })
@@ -1072,6 +1082,10 @@ pub fn app() -> Html {
                             }
                         }
                     }
+                    let current_content = tab.buffer.to_markdown();
+                    let saved = tab.saved_content.clone();
+                    let is_same = saved.as_ref().map(|s| s == &current_content).unwrap_or(false);
+                    tab.is_dirty = !is_same;
                 }
             });
         })
@@ -1149,7 +1163,11 @@ pub fn app() -> Html {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
                                                 t.name = format!("{}.md", name.replace(' ', "_"));
-                                                t.is_dirty = true;
+                                                let current_content = t.buffer.to_markdown();
+                                                let is_same = t.saved_content.as_ref()
+                                                    .map(|s| s == &current_content)
+                                                    .unwrap_or(false);
+                                                t.is_dirty = !is_same;
                                             }
                                         });
                                     }
@@ -1162,7 +1180,11 @@ pub fn app() -> Html {
                                             if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
                                                 t.title = text;
                                                 t.name = format!("{}.md", name.replace(' ', "_"));
-                                                t.is_dirty = true;
+                                                let current_content = t.buffer.to_markdown();
+                                                let is_same = t.saved_content.as_ref()
+                                                    .map(|s| s == &current_content)
+                                                    .unwrap_or(false);
+                                                t.is_dirty = !is_same;
                                             }
                                         });
                                     }
@@ -1196,7 +1218,16 @@ pub fn app() -> Html {
                                                             if let Some(block) = tab.buffer.blocks.get_mut(&id) {
                                                                 block.content = content;
                                                             }
-                                                            tab.is_dirty = true;
+                                                            let current_content = tab.buffer.to_markdown();
+                                                            let saved = tab.saved_content.clone();
+                                                            let is_same = saved.as_ref()
+                                                                .map(|s| s == &current_content)
+                                                                .unwrap_or(false);
+                                                            web_sys::console::log_1(&format!("on_change: current='{}', saved={:?}, is_same={}", 
+                                                                current_content.len(), 
+                                                                saved.as_ref().map(|s| s.len()), 
+                                                                is_same).into());
+                                                            tab.is_dirty = !is_same;
                                                         }
                                                     });
                                                 })}
@@ -1206,7 +1237,11 @@ pub fn app() -> Html {
                                                             if let Some(block) = tab.buffer.blocks.get_mut(&id) {
                                                                 block.content = content;
                                                             }
-                                                            tab.is_dirty = true;
+                                                            let current_content = tab.buffer.to_markdown();
+                                                            let is_same = tab.saved_content.as_ref()
+                                                                .map(|s| s == &current_content)
+                                                                .unwrap_or(false);
+                                                            tab.is_dirty = !is_same;
                                                         }
                                                     });
                                                 })}
@@ -1419,7 +1454,6 @@ pub fn block_component(props: &BlockProps) -> Html {
     let oninput = {
         let on_show_slash_menu = props.on_show_slash_menu.clone();
         let on_change = props.on_change.clone();
-        let on_blur = props.on_blur.clone();
         let block_id = props.block.id;
         Callback::from(move |e: InputEvent| {
             if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
@@ -1427,10 +1461,10 @@ pub fn block_component(props: &BlockProps) -> Html {
                 if let Some(input_data) = e.data() {
                     if input_data == "/" {
                         on_show_slash_menu.emit(block_id);
-                    } else {
-                        on_change.emit((block_id, text));
                     }
                 }
+                // Always emit on_change - handles both typing AND deleting
+                on_change.emit((block_id, text));
             }
         })
     };
