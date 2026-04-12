@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::DialogExt;
 use std::path::PathBuf;
-use log::info;
 use std::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -12,6 +11,12 @@ pub struct SaveResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct XelatexCheckResult {
+    pub available: bool,
+    pub version: Option<String>,
+}
+
+#[allow(dead_code)]
 pub struct PandocCheckResult {
     pub available: bool,
     pub version: Option<String>,
@@ -26,8 +31,6 @@ async fn save_markdown(
     #[allow(non_snake_case)]
     defaultName: Option<String>,
 ) -> Result<SaveResponse, String> {
-    info!("Backend received - content length: {}, filePath: {:?}", content.len(), filePath);
-    
     let path = if let Some(path) = filePath {
         path
     } else {
@@ -50,11 +53,9 @@ async fn save_markdown(
         }
     };
 
-    info!("Writing to path: {}", path);
     let pb = PathBuf::from(&path);
     match std::fs::write(&pb, &content) {
         Ok(_) => {
-            info!("File saved successfully!");
             Ok(SaveResponse {
                 success: true,
                 file_path: Some(path),
@@ -62,7 +63,6 @@ async fn save_markdown(
             })
         }
         Err(e) => {
-            info!("Error saving file: {}", e);
             Ok(SaveResponse {
                 success: false,
                 file_path: None,
@@ -72,11 +72,11 @@ async fn save_markdown(
     }
 }
 
+
+
 #[tauri::command]
-async fn check_pandoc() -> PandocCheckResult {
-    info!("Checking pandoc availability...");
-    
-    match std::process::Command::new("pandoc")
+async fn check_xelatex() -> XelatexCheckResult {
+    match std::process::Command::new("xelatex")
         .arg("--version")
         .output()
     {
@@ -86,26 +86,20 @@ async fn check_pandoc() -> PandocCheckResult {
                     .lines()
                     .next()
                     .map(|s| s.to_string());
-                info!("Pandoc available: {:?}", version);
-                PandocCheckResult {
+                return XelatexCheckResult {
                     available: true,
                     version,
-                }
+                };
             } else {
-                info!("Pandoc command failed");
-                PandocCheckResult {
-                    available: false,
-                    version: None,
-                }
             }
         }
-        Err(e) => {
-            info!("Pandoc not found: {}", e);
-            PandocCheckResult {
-                available: false,
-                version: None,
-            }
+        Err(_) => {
         }
+    }
+
+    XelatexCheckResult {
+        available: false,
+        version: None,
     }
 }
 
@@ -116,8 +110,7 @@ async fn export_pdf(
     #[allow(non_snake_case)]
     defaultName: Option<String>,
 ) -> Result<SaveResponse, String> {
-    info!("Export PDF requested, content length: {}", content.len());
-    
+
     let name = defaultName.unwrap_or_else(|| "documento".to_string());
     let pdf_path = match app
         .dialog()
@@ -136,11 +129,9 @@ async fn export_pdf(
         }
     };
 
-    info!("PDF will be saved to: {}", pdf_path);
 
     let temp_dir = std::env::temp_dir();
     let temp_md_path = temp_dir.join(format!("hazel_temp_{}.md", std::process::id()));
-    
     if let Err(e) = fs::write(&temp_md_path, &content) {
         return Ok(SaveResponse {
             success: false,
@@ -149,21 +140,53 @@ async fn export_pdf(
         });
     }
 
+    // Get template path - try dev path first (project root), then production path (next to exe)
+    let dev_path = std::path::PathBuf::from("src-tauri/resources/abntex2.latex");
+    let exe_path = std::env::current_exe().unwrap_or_default();
+    let prod_path = exe_path
+        .parent()
+        .map(|p| p.join("resources").join("abntex2.latex"))
+        .unwrap_or_default();
+
+    let template_path = if dev_path.exists() {
+        dev_path
+    } else if prod_path.exists() {
+        prod_path
+    } else {
+        dev_path
+    };
+
+
+    // Try system pandoc
+
+    let template_arg = format!("--template={}", template_path.display());
+    let input_arg = temp_md_path.to_string_lossy().to_string();
+
+    let cmd_args: Vec<&str> = vec![
+        "-V", "documentclass=abntex2",
+        &template_arg,
+        "-V", "lang=brazil",
+        "-V", "papersize=a4paper",
+        "-V", "fontsize=12pt",
+        "-V", "classoption=twoside",
+        "-V", "classoption=openright",
+        "-V", "linkcolor=blue",
+        &input_arg,
+        "-o",
+        &pdf_path,
+    ];
+
+
     let output = std::process::Command::new("pandoc")
-        .arg(temp_md_path.to_string_lossy().to_string())
-        .arg("-o")
-        .arg(&pdf_path)
-        .arg("--template=abntex2")
-        .arg("-V")
-        .arg("lang=pt-BR")
+        .args(&cmd_args)
         .output();
 
+    // Clean up temp file
     let _ = fs::remove_file(&temp_md_path);
 
     match output {
         Ok(result) => {
             if result.status.success() {
-                info!("PDF exported successfully to: {}", pdf_path);
                 Ok(SaveResponse {
                     success: true,
                     file_path: Some(pdf_path),
@@ -171,7 +194,6 @@ async fn export_pdf(
                 })
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
-                info!("Pandoc error: {}", stderr);
                 Ok(SaveResponse {
                     success: false,
                     file_path: None,
@@ -180,11 +202,10 @@ async fn export_pdf(
             }
         }
         Err(e) => {
-            info!("Failed to run pandoc: {}", e);
             Ok(SaveResponse {
                 success: false,
                 file_path: None,
-                error: Some(format!("Failed to run pandoc: {}", e)),
+                error: Some(format!("Failed to run pandoc: {}. Make sure pandoc is installed.", e)),
             })
         }
     }
@@ -192,32 +213,36 @@ async fn export_pdf(
 
 #[tauri::command]
 async fn save_app_state(app: tauri::AppHandle, state: String) -> Result<serde_json::Value, String> {
-    info!("Saving app state, length: {}", state.len());
-    
+
     use tauri_plugin_store::StoreExt;
-    let store = app.store("app_state.json").map_err(|e| e.to_string())?;
+    let store = match app.store("app_state.json") {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(format!("Failed to get store: {}", e));
+        }
+    };
+
     store.set("editor_state", serde_json::Value::String(state.clone()));
-    store.save().map_err(|e| e.to_string())?;
-    
-    info!("App state saved successfully");
+
+    if let Err(e) = store.save() {
+        return Err(format!("Failed to save store: {}", e));
+    }
+
     Ok(serde_json::json!({ "success": true, "state": state }))
 }
 
 #[tauri::command]
 async fn load_app_state(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    info!("Loading app state...");
-    
+
     use tauri_plugin_store::StoreExt;
     let store = app.store("app_state.json").map_err(|e| e.to_string())?;
-    
+
     match store.get("editor_state") {
         Some(value) => {
             let state_str = serde_json::to_string(&value).map_err(|e| e.to_string())?;
-            info!("App state loaded, length: {}", state_str.len());
             Ok(serde_json::json!({ "success": true, "state": state_str }))
         }
         None => {
-            info!("No saved app state found");
             Ok(serde_json::json!({ "success": false }))
         }
     }
@@ -229,7 +254,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![save_markdown, check_pandoc, export_pdf, save_app_state, load_app_state])
+        .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![save_markdown, check_xelatex, export_pdf, save_app_state, load_app_state])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

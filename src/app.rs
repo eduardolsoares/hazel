@@ -9,10 +9,6 @@ extern "C" {
 }
 
 fn save_markdown_invoke(content: String, file_path: Option<String>, default_name: Option<String>) {
-    web_sys::console::log_1(
-        &format!("Saving content: '{}', length: {}", content, content.len()).into(),
-    );
-
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({
         "content": content,
         "filePath": file_path,
@@ -29,14 +25,13 @@ fn save_markdown_invoke(content: String, file_path: Option<String>, default_name
     ));
 }
 
-fn check_pandoc_invoke() -> js_sys::Promise {
-    web_sys::console::log_1(&"Checking pandoc...".into());
+fn check_xelatex_invoke() -> js_sys::Promise {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({})).unwrap();
-    invoke("check_pandoc", args.into())
+    let promise = invoke("check_xelatex", args.into());
+    promise
 }
 
 fn export_pdf_invoke(content: String, default_name: Option<String>) -> js_sys::Promise {
-    web_sys::console::log_1(&"Exporting PDF...".into());
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({
         "content": content,
         "defaultName": default_name
@@ -46,7 +41,6 @@ fn export_pdf_invoke(content: String, default_name: Option<String>) -> js_sys::P
 }
 
 fn save_app_state_invoke(state: String) -> js_sys::Promise {
-    web_sys::console::log_1(&"Saving app state...".into());
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({
         "state": state
     }))
@@ -55,7 +49,6 @@ fn save_app_state_invoke(state: String) -> js_sys::Promise {
 }
 
 fn load_app_state_invoke() -> js_sys::Promise {
-    web_sys::console::log_1(&"Loading app state...".into());
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({})).unwrap();
     invoke("load_app_state", args.into())
 }
@@ -278,8 +271,8 @@ pub struct EditorState {
     pub focused_block_id: Option<usize>,
     pub show_save_modal: bool,
     pub save_modal_filename: String,
-    pub pandoc_available: bool,
-    pub pandoc_version: Option<String>,
+    pub xelatex_available: bool,
+    pub xelatex_version: Option<String>,
     pub save_modal_export_type: ExportType,
     pub show_settings_modal: bool,
 }
@@ -346,8 +339,8 @@ impl Default for EditorState {
             focused_block_id: None,
             show_save_modal: false,
             save_modal_filename: "Untitled".to_string(),
-            pandoc_available: false,
-            pandoc_version: None,
+            xelatex_available: false,
+            xelatex_version: None,
             save_modal_export_type: ExportType::Markdown,
             show_settings_modal: false,
         }
@@ -439,9 +432,14 @@ pub fn app() -> Html {
     let save_callback = {
         let dispatch = dispatch.clone();
         Callback::from(move |_: ()| {
+            web_sys::console::log_1(&"Ctrl+S pressed - starting save".into());
             let state = dispatch.get();
+            web_sys::console::log_1(&format!("Current state has {} tabs", state.tabs.len()).into());
             let dto = EditorStateDto::from(&*state);
             if let Ok(state_json) = serde_json::to_string(&dto) {
+                web_sys::console::log_1(
+                    &format!("Serialized state, length: {}", state_json.len()).into(),
+                );
                 let dispatch2 = dispatch.clone();
                 let _ = save_app_state_invoke(state_json).then(
                     &wasm_bindgen::closure::Closure::wrap(Box::new(move |result: JsValue| {
@@ -451,13 +449,19 @@ pub fn app() -> Html {
                         if let Ok(result_obj) =
                             serde_wasm_bindgen::from_value::<serde_json::Value>(result)
                         {
-                            if result_obj
+                            let success = result_obj
                                 .get("success")
                                 .and_then(|v| v.as_bool())
-                                .unwrap_or(false)
-                            {
+                                .unwrap_or(false);
+                            web_sys::console::log_1(&format!("Save success: {}", success).into());
+                            if success {
+                                web_sys::console::log_1(&"About to clear is_dirty...".into());
                                 dispatch2.reduce_mut(move |state| {
                                     for tab in state.tabs.iter_mut() {
+                                        web_sys::console::log_1(
+                                            &format!("Setting is_dirty=false for tab {}", tab.id)
+                                                .into(),
+                                        );
                                         tab.is_dirty = false;
                                     }
                                 });
@@ -491,7 +495,7 @@ pub fn app() -> Html {
                         }
                         state.show_save_modal = false;
                     });
-                } else if state.pandoc_available {
+                } else if state.xelatex_available {
                     let default_name = Some(filename.replace(' ', "_"));
                     let promise = export_pdf_invoke(content, default_name);
                     let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(Box::new(
@@ -537,7 +541,6 @@ pub fn app() -> Html {
         })
     };
 
-    let dispatch_for_pandoc = dispatch.clone();
     let dispatch_for_load = dispatch.clone();
 
     use_effect(move || {
@@ -579,37 +582,41 @@ pub fn app() -> Html {
         || {}
     });
 
-    let dispatch_for_pandoc = dispatch.clone();
+    {
+        use std::sync::OnceLock;
+        static CHECKED: OnceLock<()> = OnceLock::new();
 
-    use_effect(move || {
-        let dispatch = dispatch_for_pandoc.clone();
-        let promise = check_pandoc_invoke();
-        let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(Box::new(
-            move |result: JsValue| {
-                web_sys::console::log_1(&format!("Pandoc check result: {:?}", result).into());
-                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result)
-                {
+        let dispatch = dispatch.clone();
+        if CHECKED.get().is_none() {
+            let _ = CHECKED.set(());
+
+            wasm_bindgen_futures::spawn_local(async move {
+                web_sys::console::log_1(&"Checking xelatex availability...".into());
+                let promise = check_xelatex_invoke();
+                let result = match wasm_bindgen_futures::JsFuture::from(promise).await {
+                    Ok(value) => value,
+                    Err(e) => {
+                        web_sys::console::log_1(&format!("xelatex check error: {:?}", e).into());
+                        return;
+                    }
+                };
+
+                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result) {
                     if let Some(available) = result_obj.get("available").and_then(|v| v.as_bool()) {
                         let version = result_obj
                             .get("version")
                             .and_then(|v| v.as_str())
                             .map(String::from);
+                        web_sys::console::log_1(&format!("xelatex available: {}, version: {:?}", available, version).into());
                         dispatch.reduce_mut(move |state| {
-                            state.pandoc_available = available;
-                            state.pandoc_version = version;
+                            state.xelatex_available = available;
+                            state.xelatex_version = version;
                         });
-                        if !available {
-                            web_sys::console::log_1(
-                                &"Pandoc not installed. PDF export will not be available.".into(),
-                            );
-                        }
                     }
                 }
-            },
-        )
-            as Box<dyn FnMut(JsValue)>));
-        || {}
-    });
+            });
+        }
+    }
 
     let dispatch_for_keys = dispatch.clone();
 
@@ -1031,7 +1038,7 @@ pub fn app() -> Html {
                 let dispatch_for_type_pdf = dispatch.clone();
                 let filename = state.save_modal_filename.clone();
                 let export_type = state.save_modal_export_type.clone();
-                let pandoc_available = state.pandoc_available;
+                let xelatex_available = state.xelatex_available;
                 html! {
                     <div class="modal-overlay">
                         <div class="modal">
@@ -1069,12 +1076,12 @@ pub fn app() -> Html {
                                         />
                                         <span>{"Markdown (.md)"}</span>
                                     </label>
-                                    <label class={classes!("modal-radio-label", if !pandoc_available { "disabled" } else { "" })}>
+                                    <label class={classes!("modal-radio-label", if !xelatex_available { "disabled" } else { "" })}>
                                         <input
                                             type="radio"
                                             name="export_type"
                                             checked={export_type == ExportType::Pdf}
-                                            disabled={!pandoc_available}
+                                            disabled={!xelatex_available}
                                             onchange={Callback::from(move |_| {
                                                 dispatch_for_type_pdf.reduce_mut(move |state| {
                                                     state.save_modal_export_type = ExportType::Pdf;
@@ -1084,10 +1091,10 @@ pub fn app() -> Html {
                                         <span>{"PDF (ABNT)"}</span>
                                     </label>
                                 </div>
-                                {if !pandoc_available {
+                                {if !xelatex_available {
                                     html! {
                                         <div class="modal-warning">
-                                            {"⚠ Pandoc não está instalado. Para exportar PDF, instale o Pandoc e o abntex2."}
+                                            {"⚠ XeLaTeX não está instalado. Para exportar PDF, instale o XeLaTeX."}
                                         </div>
                                     }
                                 } else {
