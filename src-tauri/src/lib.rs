@@ -190,12 +190,46 @@ async fn export_pdf(
     }
 }
 
+#[tauri::command]
+async fn save_app_state(app: tauri::AppHandle, state: String) -> Result<serde_json::Value, String> {
+    info!("Saving app state, length: {}", state.len());
+    
+    use tauri_plugin_store::StoreExt;
+    let store = app.store("app_state.json").map_err(|e| e.to_string())?;
+    store.set("editor_state", serde_json::Value::String(state.clone()));
+    store.save().map_err(|e| e.to_string())?;
+    
+    info!("App state saved successfully");
+    Ok(serde_json::json!({ "success": true, "state": state }))
+}
+
+#[tauri::command]
+async fn load_app_state(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    info!("Loading app state...");
+    
+    use tauri_plugin_store::StoreExt;
+    let store = app.store("app_state.json").map_err(|e| e.to_string())?;
+    
+    match store.get("editor_state") {
+        Some(value) => {
+            let state_str = serde_json::to_string(&value).map_err(|e| e.to_string())?;
+            info!("App state loaded, length: {}", state_str.len());
+            Ok(serde_json::json!({ "success": true, "state": state_str }))
+        }
+        None => {
+            info!("No saved app state found");
+            Ok(serde_json::json!({ "success": false }))
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![save_markdown, check_pandoc, export_pdf])
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![save_markdown, check_pandoc, export_pdf, save_app_state, load_app_state])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

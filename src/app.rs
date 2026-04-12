@@ -45,6 +45,21 @@ fn export_pdf_invoke(content: String, default_name: Option<String>) -> js_sys::P
     invoke("export_pdf", args.into())
 }
 
+fn save_app_state_invoke(state: String) -> js_sys::Promise {
+    web_sys::console::log_1(&"Saving app state...".into());
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "state": state
+    }))
+    .unwrap();
+    invoke("save_app_state", args.into())
+}
+
+fn load_app_state_invoke() -> js_sys::Promise {
+    web_sys::console::log_1(&"Loading app state...".into());
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({})).unwrap();
+    invoke("load_app_state", args.into())
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
     pub id: usize,
@@ -266,6 +281,40 @@ pub struct EditorState {
     pub pandoc_available: bool,
     pub pandoc_version: Option<String>,
     pub save_modal_export_type: ExportType,
+    pub show_settings_modal: bool,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorStateDto {
+    pub tabs: Vec<Tab>,
+    pub active_tab_id: usize,
+    pub next_tab_id: usize,
+    pub next_block_id: usize,
+    pub show_settings_modal: bool,
+}
+
+impl From<&EditorState> for EditorStateDto {
+    fn from(state: &EditorState) -> Self {
+        Self {
+            tabs: state.tabs.clone(),
+            active_tab_id: state.active_tab_id,
+            next_tab_id: state.next_tab_id,
+            next_block_id: state.next_block_id,
+            show_settings_modal: false,
+        }
+    }
+}
+
+impl From<EditorStateDto> for EditorState {
+    fn from(dto: EditorStateDto) -> Self {
+        let mut state = Self::default();
+        state.tabs = dto.tabs;
+        state.active_tab_id = dto.active_tab_id;
+        state.next_tab_id = dto.next_tab_id;
+        state.next_block_id = dto.next_block_id;
+        state.show_settings_modal = dto.show_settings_modal;
+        state
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -300,6 +349,7 @@ impl Default for EditorState {
             pandoc_available: false,
             pandoc_version: None,
             save_modal_export_type: ExportType::Markdown,
+            show_settings_modal: false,
         }
     }
 }
@@ -388,14 +438,35 @@ pub fn app() -> Html {
 
     let save_callback = {
         let dispatch = dispatch.clone();
-        Callback::from(move |_| {
+        Callback::from(move |_: ()| {
             let state = dispatch.get();
-            if let Some(tab) = state.tabs.iter().find(|t| t.id == state.active_tab_id) {
-                dispatch.reduce_mut(move |state| {
-                    state.show_save_modal = true;
-                    state.save_modal_filename = tab.title.clone();
-                    state.save_modal_export_type = ExportType::Markdown;
-                });
+            let dto = EditorStateDto::from(&*state);
+            if let Ok(state_json) = serde_json::to_string(&dto) {
+                let dispatch2 = dispatch.clone();
+                let _ = save_app_state_invoke(state_json).then(
+                    &wasm_bindgen::closure::Closure::wrap(Box::new(move |result: JsValue| {
+                        web_sys::console::log_1(
+                            &format!("Save to store result: {:?}", result).into(),
+                        );
+                        if let Ok(result_obj) =
+                            serde_wasm_bindgen::from_value::<serde_json::Value>(result)
+                        {
+                            if result_obj
+                                .get("success")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
+                                dispatch2.reduce_mut(move |state| {
+                                    for tab in state.tabs.iter_mut() {
+                                        tab.is_dirty = false;
+                                    }
+                                });
+                                web_sys::console::log_1(&"State saved, is_dirty cleared".into());
+                            }
+                        }
+                    })
+                        as Box<dyn FnMut(JsValue)>),
+                );
             }
         })
     };
@@ -467,6 +538,48 @@ pub fn app() -> Html {
     };
 
     let dispatch_for_pandoc = dispatch.clone();
+    let dispatch_for_load = dispatch.clone();
+
+    use_effect(move || {
+        let dispatch = dispatch_for_load.clone();
+        let promise = load_app_state_invoke();
+        let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(Box::new(
+            move |result: JsValue| {
+                web_sys::console::log_1(&format!("Load app state result: {:?}", result).into());
+                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result)
+                {
+                    if let Some(state_str) = result_obj
+                        .get("success")
+                        .and_then(|v| v.as_bool())
+                        .and_then(|success| {
+                            if success {
+                                result_obj
+                                    .get("state")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from)
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        if let Ok(loaded_dto) = serde_json::from_str::<EditorStateDto>(&state_str) {
+                            web_sys::console::log_1(&"State loaded successfully from store".into());
+                            let loaded_state: EditorState = loaded_dto.into();
+                            dispatch.set(loaded_state);
+                        } else {
+                            web_sys::console::log_1(&"Failed to parse loaded state".into());
+                        }
+                    } else {
+                        web_sys::console::log_1(&"No saved state found, using default".into());
+                    }
+                }
+            },
+        )
+            as Box<dyn FnMut(JsValue)>));
+        || {}
+    });
+
+    let dispatch_for_pandoc = dispatch.clone();
 
     use_effect(move || {
         let dispatch = dispatch_for_pandoc.clone();
@@ -498,6 +611,8 @@ pub fn app() -> Html {
         || {}
     });
 
+    let dispatch_for_keys = dispatch.clone();
+
     use_effect(move || {
         use gloo_events::EventListener;
         use std::sync::OnceLock;
@@ -506,6 +621,7 @@ pub fn app() -> Html {
 
         if REGISTERED.get().is_none() {
             let save = save_callback.clone();
+            let dispatch_for_escape = dispatch_for_keys.clone();
             let _ = REGISTERED.set(());
 
             let listener = EventListener::new(
@@ -516,6 +632,11 @@ pub fn app() -> Html {
                     if e.ctrl_key() && e.key() == "s" {
                         e.prevent_default();
                         save.emit(());
+                    } else if e.key() == "Escape" {
+                        e.prevent_default();
+                        dispatch_for_escape.reduce_mut(move |state| {
+                            state.show_settings_modal = true;
+                        });
                     }
                 },
             );
@@ -980,6 +1101,47 @@ pub fn app() -> Html {
                                 <button class="modal-btn modal-btn-save" onclick={handle_save.clone()}>
                                     {"Salvar"}
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            } else {
+                html! {}
+            }}
+
+            {if state.show_settings_modal {
+                let dispatch_for_close = dispatch.clone();
+                let dispatch_for_save_file = dispatch.clone();
+                let close_settings = Callback::from(move |_: MouseEvent| {
+                    dispatch_for_close.reduce_mut(move |state| {
+                        state.show_settings_modal = false;
+                    });
+                });
+                let open_save_modal = Callback::from(move |_: MouseEvent| {
+                    let state = dispatch_for_save_file.get();
+                    if let Some(tab) = state.tabs.iter().find(|t| t.id == state.active_tab_id) {
+                        dispatch_for_save_file.reduce_mut(move |state| {
+                            state.show_settings_modal = false;
+                            state.show_save_modal = true;
+                            state.save_modal_filename = tab.title.clone();
+                            state.save_modal_export_type = ExportType::Markdown;
+                        });
+                    }
+                });
+                html! {
+                    <div class="modal-overlay">
+                        <div class="modal settings-modal">
+                            <div class="modal-header">
+                                {"Configurações"}
+                                <button class="modal-close" onclick={close_settings}>{"×"}</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="settings-option">
+                                    <button class="settings-btn" onclick={open_save_modal}>
+                                        {"Salvar arquivo"}
+                                    </button>
+                                    <span class="settings-desc">{"Exportar para Markdown ou PDF (ABNT)"}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
