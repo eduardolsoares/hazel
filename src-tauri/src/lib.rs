@@ -16,16 +16,19 @@ async fn save_markdown(
     content: String,
     #[allow(non_snake_case)]
     filePath: Option<String>,
+    #[allow(non_snake_case)]
+    defaultName: Option<String>,
 ) -> Result<SaveResponse, String> {
     info!("Backend received - content length: {}, filePath: {:?}", content.len(), filePath);
     
     let path = if let Some(path) = filePath {
         path
     } else {
+        let name = defaultName.unwrap_or_else(|| "untitled".to_string());
         match app
             .dialog()
             .file()
-            .set_file_name("untitled.md".to_string())
+            .set_file_name(name)
             .add_filter("Markdown", &["md"])
             .blocking_save_file()
         {
