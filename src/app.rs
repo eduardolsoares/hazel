@@ -8,7 +8,7 @@ extern "C" {
     fn invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
 }
 
-fn save_markdown_invoke(content: String, file_path: Option<String>, default_name: Option<String>) {
+fn save_markdown_invoke(content: String, file_path: Option<String>, default_name: Option<String>) -> js_sys::Promise {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({
         "content": content,
         "filePath": file_path,
@@ -16,13 +16,7 @@ fn save_markdown_invoke(content: String, file_path: Option<String>, default_name
     }))
     .unwrap();
 
-    let promise = invoke("save_markdown", args.into());
-
-    let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(
-        Box::new(move |result: JsValue| {
-            web_sys::console::log_1(&format!("Save result: {:?}", result).into());
-        }) as Box<dyn FnMut(JsValue)>,
-    ));
+    invoke("save_markdown", args.into())
 }
 
 fn check_xelatex_invoke() -> js_sys::Promise {
@@ -275,6 +269,13 @@ pub struct EditorState {
     pub xelatex_version: Option<String>,
     pub save_modal_export_type: ExportType,
     pub show_settings_modal: bool,
+    pub notification: Option<Notification>,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Notification {
+    pub message: String,
+    pub is_error: bool,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -343,6 +344,7 @@ impl Default for EditorState {
             xelatex_version: None,
             save_modal_export_type: ExportType::Markdown,
             show_settings_modal: false,
+            notification: None,
         }
     }
 }
@@ -405,6 +407,15 @@ fn get_slash_options() -> Vec<SlashOption> {
 #[function_component(App)]
 pub fn app() -> Html {
     let (state, dispatch) = use_store::<EditorState>();
+
+    let dismiss_notification = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            dispatch.reduce_mut(move |state| {
+                state.notification = None;
+            });
+        })
+    };
 
     let open_save_modal = {
         let dispatch = dispatch.clone();
@@ -486,26 +497,85 @@ pub fn app() -> Html {
                 if state.save_modal_export_type == ExportType::Markdown {
                     let file_path = tab.file_path.clone();
                     let default_name = Some(format!("{}.md", filename.replace(' ', "_")));
-                    save_markdown_invoke(content, file_path, default_name);
-
-                    dispatch.reduce_mut(move |state| {
-                        if let Some(t) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id)
-                        {
-                            t.is_dirty = false;
+                    let dispatch_for_notify = dispatch.clone();
+                    let active_tab_id = state.active_tab_id;
+                    
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let promise = save_markdown_invoke(content, file_path, default_name);
+                        let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+                        
+                        match result {
+                            Ok(value) => {
+                                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
+                                    let success = result_obj.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    let notification = if success {
+                                        let path = result_obj.get("file_path").and_then(|v| v.as_str())
+                                            .map(|s| format!("Arquivo salvo: {}", s))
+                                            .unwrap_or_else(|| "Salvo com sucesso".to_string());
+                                        Notification { message: path, is_error: false }
+                                    } else {
+                                        let error = result_obj.get("error").and_then(|v| v.as_str())
+                                            .unwrap_or("Erro ao salvar")
+                                            .to_string();
+                                        Notification { message: error, is_error: true }
+                                    };
+                                    dispatch_for_notify.reduce_mut(move |state| {
+                                        state.notification = Some(notification);
+                                        if let Some(t) = state.tabs.iter_mut().find(|t| t.id == active_tab_id)
+                                        {
+                                            t.is_dirty = false;
+                                        }
+                                        state.show_save_modal = false;
+                                    });
+                                }
+                            },
+                            Err(_) => {}
                         }
-                        state.show_save_modal = false;
                     });
+                    
+                    // Close modal immediately, notification will show async
                 } else if state.xelatex_available {
                     let default_name = Some(filename.replace(' ', "_"));
-                    let promise = export_pdf_invoke(content, default_name);
-                    let _ = promise.then(&wasm_bindgen::closure::Closure::wrap(Box::new(
-                        move |result: JsValue| {
-                            web_sys::console::log_1(
-                                &format!("PDF export result: {:?}", result).into(),
-                            );
-                        },
-                    )
-                        as Box<dyn FnMut(JsValue)>));
+                    
+                    // Use async/await pattern
+                    let content_clone = content.clone();
+                    let default_name_clone = default_name.clone();
+                    let dispatch_for_notify = dispatch.clone();
+                    
+                    wasm_bindgen_futures::spawn_local(async move {
+                        web_sys::console::log_1(&"Starting PDF export async".into());
+                        let promise = export_pdf_invoke(content_clone, default_name_clone);
+                        let result = wasm_bindgen_futures::JsFuture::from(promise).await;
+                        
+                        web_sys::console::log_1(&"PDF export async got result".into());
+                        
+                        match result {
+                            Ok(value) => {
+                                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
+                                    let success = result_obj.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    web_sys::console::log_1(&format!("Export success: {}", success).into());
+                                    
+                                    let notification = if success {
+                                        let path = result_obj.get("file_path").and_then(|v| v.as_str())
+                                            .map(|s| format!("PDF salvo em: {}", s))
+                                            .unwrap_or_else(|| "PDF salvo com sucesso".to_string());
+                                        Notification { message: path, is_error: false }
+                                    } else {
+                                        let error = result_obj.get("error").and_then(|v| v.as_str())
+                                            .unwrap_or("Erro ao exportar PDF")
+                                            .to_string();
+                                        Notification { message: error, is_error: true }
+                                    };
+                                    dispatch_for_notify.reduce_mut(move |state| {
+                                        state.notification = Some(notification);
+                                    });
+                                }
+                            },
+                            Err(e) => {
+                                web_sys::console::log_1(&format!("PDF export error: {:?}", e).into());
+                            }
+                        }
+                    });
 
                     dispatch.reduce_mut(move |state| {
                         if let Some(t) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id)
@@ -1146,6 +1216,17 @@ pub fn app() -> Html {
                                 </div>
                             </div>
                         </div>
+                    </div>
+                }
+            } else {
+                html! {}
+            }}
+            
+            {if let Some(ref n) = state.notification.clone() {
+                html! {
+                    <div class={classes!("notification", if n.is_error { "notification-error" } else { "notification-success" })}>
+                        <span>{&n.message}</span>
+                        <button class="notification-close" onclick={dismiss_notification.clone()}>{"×"}</button>
                     </div>
                 }
             } else {
