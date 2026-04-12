@@ -1,12 +1,7 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use js_sys::Object;
-use js_sys::Reflect;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use web_sys::console;
 use yew::prelude::*;
+use yewdux::prelude::*;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["__TAURI__", "core"], js_name = invoke)]
@@ -237,7 +232,9 @@ pub struct SlashOption {
     pub icon: &'static str,
 }
 
-#[derive(Clone, PartialEq)]
+use yewdux::prelude::*;
+
+#[derive(Clone, PartialEq, Store)]
 pub struct EditorState {
     pub tabs: Vec<Tab>,
     pub active_tab_id: usize,
@@ -247,8 +244,8 @@ pub struct EditorState {
     pub slash_menu_block_id: Option<usize>,
 }
 
-impl EditorState {
-    pub fn new() -> Self {
+impl Default for EditorState {
+    fn default() -> Self {
         let mut buffer = Buffer::new();
         buffer.push_back(Block::new(0, BlockType::Paragraph));
 
@@ -267,10 +264,6 @@ impl EditorState {
             show_slash_menu: false,
             slash_menu_block_id: None,
         }
-    }
-
-    pub fn get_active_tab(&self) -> Option<&Tab> {
-        self.tabs.iter().find(|t| t.id == self.active_tab_id)
     }
 }
 
@@ -331,46 +324,21 @@ fn get_slash_options() -> Vec<SlashOption> {
 
 #[function_component(App)]
 pub fn app() -> Html {
-    let state = use_state(|| EditorState::new());
-
-    // Use a RefCell wrapped in Rc to share mutable state
-    let state_holder =
-        use_state(|| Rc::new(RefCell::new((*state).clone())) as Rc<RefCell<EditorState>>);
-
-    // Update the holder when state changes
-    {
-        let state_holder = state_holder.clone();
-        let state = state.clone();
-        use_effect(move || {
-            // Clone the state value into the holder when effect runs
-            *state_holder.borrow_mut() = (*state).clone();
-            || {}
-        });
-    }
-
-    // Callback to update both state and holder
-    let update_state = {
-        let state = state.clone();
-        let state_holder = state_holder.clone();
-        Callback::from(move |new_state: EditorState| {
-            state.set(new_state.clone());
-            *state_holder.borrow_mut() = new_state;
-        })
-    };
+    let (state, dispatch) = use_store::<EditorState>();
 
     let save_callback = {
-        let state_holder = state_holder.clone();
+        let dispatch = dispatch.clone();
         Callback::from(move |_| {
-            let current_state = (*state_holder.borrow()).clone();
+            let state = dispatch.get();
             web_sys::console::log_1(&format!("dumping all state").into());
 
-            for (tab_idx, tab) in current_state.tabs.iter().enumerate() {
+            for (tab_idx, tab) in state.tabs.iter().enumerate() {
                 web_sys::console::log_1(
                     &format!(
                         "Tab[{}] - id: {}, is_active: {}",
                         tab_idx,
                         tab.id,
-                        tab.id == current_state.active_tab_id
+                        tab.id == state.active_tab_id
                     )
                     .into(),
                 );
@@ -381,11 +349,7 @@ pub fn app() -> Html {
                 }
             }
 
-            if let Some(tab) = current_state
-                .tabs
-                .iter()
-                .find(|t| t.id == current_state.active_tab_id)
-            {
+            if let Some(tab) = state.tabs.iter().find(|t| t.id == state.active_tab_id) {
                 let content = tab.buffer.to_markdown();
                 web_sys::console::log_1(&format!("Content to save: '{}'", content).into());
                 let file_path = tab.file_path.clone();
@@ -422,84 +386,114 @@ pub fn app() -> Html {
     });
 
     let switch_tab = {
-        let state = state.clone();
+        let dispatch = dispatch.clone();
         Callback::from(move |tab_id: usize| {
-            let mut new_state = (*state).clone();
-            new_state.active_tab_id = tab_id;
-            new_state.show_slash_menu = false;
-            state.set(new_state);
+            web_sys::console::log_1(&format!("switch_tab called with: {}", tab_id).into());
+            let captured_id = tab_id;
+            dispatch.reduce_mut(move |state| {
+                web_sys::console::log_1(
+                    &format!(
+                        "switch_tab - received tab_id: {}, setting active to it",
+                        captured_id
+                    )
+                    .into(),
+                );
+                state.active_tab_id = captured_id;
+                state.show_slash_menu = false;
+            });
         })
     };
 
     let add_tab = {
-        let state = state.clone();
+        let dispatch = dispatch.clone();
         Callback::from(move |_| {
-            let mut new_state = (*state).clone();
-            let new_id = new_state.next_tab_id;
-            new_state.next_tab_id += 1;
+            dispatch.reduce_mut(move |state| {
+                let new_id = state.next_tab_id;
+                state.next_tab_id += 1;
 
-            let mut buffer = Buffer::new();
-            let block_id = new_state.next_block_id;
-            buffer.push_back(Block::new(block_id, BlockType::Paragraph));
-            new_state.next_block_id += 1;
+                let mut buffer = Buffer::new();
+                let block_id = state.next_block_id;
+                buffer.push_back(Block::new(block_id, BlockType::Paragraph));
+                state.next_block_id += 1;
 
-            new_state.tabs.push(Tab {
-                id: new_id,
-                name: "Untitled.md".to_string(),
-                title: "Untitled".to_string(),
-                buffer,
-                file_path: None,
-                is_dirty: false,
+                state.tabs.push(Tab {
+                    id: new_id,
+                    name: "Untitled.md".to_string(),
+                    title: "Untitled".to_string(),
+                    buffer,
+                    file_path: None,
+                    is_dirty: false,
+                });
+                state.active_tab_id = new_id;
             });
-            new_state.active_tab_id = new_id;
-            state.set(new_state);
         })
     };
 
     let close_tab = {
-        let state = state.clone();
+        let dispatch = dispatch.clone();
         Callback::from(move |tab_id: usize| {
-            let mut new_state = (*state).clone();
-            if new_state.tabs.len() > 1 {
-                new_state.tabs.retain(|t| t.id != tab_id);
-                if new_state.active_tab_id == tab_id {
-                    new_state.active_tab_id = new_state.tabs[0].id;
+            dispatch.reduce_mut(move |state| {
+                if state.tabs.len() > 1 {
+                    state.tabs.retain(|t| t.id != tab_id);
+                    if state.active_tab_id == tab_id {
+                        state.active_tab_id = state.tabs[0].id;
+                    }
                 }
-            }
-            state.set(new_state);
+            });
         })
     };
 
     let hide_slash_menu = {
-        let state = state.clone();
+        let dispatch = dispatch.clone();
         Callback::from(move |_| {
-            let mut new_state = (*state).clone();
-            new_state.show_slash_menu = false;
-            new_state.slash_menu_block_id = None;
-            state.set(new_state);
+            dispatch.reduce_mut(move |state| {
+                state.show_slash_menu = false;
+                state.slash_menu_block_id = None;
+            });
         })
     };
 
     let show_slash_menu = {
-        let state = state.clone();
+        let dispatch = dispatch.clone();
         Callback::from(move |block_id: usize| {
-            let mut new_state = (*state).clone();
-            new_state.show_slash_menu = true;
-            new_state.slash_menu_block_id = Some(block_id);
-            state.set(new_state);
+            dispatch.reduce_mut(move |state| {
+                state.show_slash_menu = true;
+                state.slash_menu_block_id = Some(block_id);
+            });
         })
     };
 
     let select_slash_option = {
-        let state = state.clone();
-        Callback::from(move |_block_type: BlockType| {
-            let mut new_state = (*state).clone();
-            new_state.show_slash_menu = false;
-            state.set(new_state);
+        let dispatch = dispatch.clone();
+        Callback::from(move |block_type: BlockType| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(block_id) = state.slash_menu_block_id {
+                    if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                        if let Some(block) = tab.buffer.blocks.get_mut(&block_id) {
+                            block.block_type = block_type.clone();
+                            block.content = String::new();
+                        }
+                    }
+                }
+                state.show_slash_menu = false;
+                state.slash_menu_block_id = None;
+            });
         })
     };
 
-    let active_tab = (*state).get_active_tab().cloned();
+    let active_tab = state
+        .tabs
+        .iter()
+        .find(|t| t.id == state.active_tab_id)
+        .cloned();
+    web_sys::console::log_1(
+        &format!(
+            "render - active_tab_id: {}, title: {:?}",
+            state.active_tab_id,
+            active_tab.as_ref().map(|t| &t.title)
+        )
+        .into(),
+    );
 
     html! {
         <div class="app">
@@ -537,20 +531,35 @@ pub fn app() -> Html {
             <div class="editor-container">
                 {if let Some(tab) = active_tab.clone() {
                     let tab_id = tab.id;
+                    let tab_title = tab.title.clone();
+                    let tab_id_for_title = tab.id;
+                    let dispatch_for_title = dispatch.clone();
                     html! {
                         <div class="page" key={tab_id}>
-                            <div class="page-title" contenteditable="true">
-                                {"Untitled"}
+                            <div class="page-title" contenteditable="true"
+                                onblur={Callback::from(move |e: FocusEvent| {
+                                    if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
+                                        let text = target.text_content().unwrap_or_default();
+                                        dispatch_for_title.reduce_mut(move |state| {
+                                            if let Some(t) = state.tabs.iter_mut().find(|t| t.id == tab_id_for_title) {
+                                                t.title = text;
+                                            }
+                                        });
+                                    }
+                                })}
+                            >
+                                {&tab_title}
                             </div>
 
                             <div class="blocks">
                                 {for tab.buffer.to_vec().iter().map(|block| {
                                     let is_menu_target = state.show_slash_menu && state.slash_menu_block_id == Some(block.id);
                                     let hide_slash = hide_slash_menu.clone();
-                                    let state_clone = state.clone();
+                                    let dispatch_clone = dispatch.clone();
                                     html! {
                                         <>
                                             <BlockComponent
+                                                key={block.id}
                                                 block={block.clone()}
                                                 on_show_slash_menu={show_slash_menu.clone()}
                                                 on_keydown={Callback::from(move |key: String| {
@@ -559,13 +568,13 @@ pub fn app() -> Html {
                                                     }
                                                 })}
                                                 on_change={Callback::from(move |(id, content): (usize, String)| {
-                                                    let mut new_state = (*state_clone).clone();
-                                                    if let Some(tab) = new_state.tabs.iter_mut().find(|t| t.id == new_state.active_tab_id) {
-                                                        if let Some(block) = tab.buffer.blocks.get_mut(&id) {
-                                                            block.content = content;
+                                                    dispatch_clone.reduce_mut(move |state| {
+                                                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                                                            if let Some(block) = tab.buffer.blocks.get_mut(&id) {
+                                                                block.content = content;
+                                                            }
                                                         }
-                                                    }
-                                                    state_clone.set(new_state);
+                                                    });
                                                 })}
                                             />
                                             {if is_menu_target {
