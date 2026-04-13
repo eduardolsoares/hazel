@@ -1,9 +1,11 @@
+[workspace]
+members = ["src-tauri"]
+
 [package]
-name = "hazel"
+name = "hazel-ui"
 version = "1.0.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 yew = { version = "0.21", features = ["csr"] }
 yewdux = "0.11"
@@ -17,6 +19,3 @@ serde_json = "1"
 console_error_panic_hook = "0.1.7"
 gloo-events = "0.2"
 gloo-timers = { version = "0.2", features = ["futures"] }
-
-[workspace]
-members = ["src-tauri"]
