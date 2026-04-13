@@ -47,7 +47,7 @@ fn load_app_state_invoke() -> js_sys::Promise {
     invoke("load_app_state", args.into())
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
     pub id: usize,
     pub block_type: BlockType,
@@ -310,7 +310,6 @@ pub struct SlashCategory {
     pub options: Vec<SlashOption>,
 }
 
-use yewdux::prelude::*;
 
 #[derive(Clone, PartialEq, Store)]
 pub struct EditorState {
