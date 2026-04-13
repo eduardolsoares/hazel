@@ -1,4 +1,4 @@
-name: Rust
+name: Rust Build and Release
 
 on:
   push:
@@ -11,12 +11,36 @@ env:
 
 jobs:
   build:
-
+    permissions:
+      contents: write # Needed for creating a release/uploading artifacts
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build Tauri backend
-      run: cargo tauri build
-    - name: Run Tauri backend tests
-      run: cargo test -p hazel --verbose
+      - uses: actions/checkout@v4
+
+      # Setup Rust and WASM target (Essential for Yew)
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Cache Rust dependencies
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        run: cargo install trunk --locked
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__ 
+          releaseName: "App Release v__VERSION__"
+          releaseBody: "Automated build from GitHub Actions"
+          releaseDraft: true
+          prerelease: false
+
+      # 6. Run backend tests
+      - name: Run Tauri backend tests
+        run: cargo test -p hazel --verbose
