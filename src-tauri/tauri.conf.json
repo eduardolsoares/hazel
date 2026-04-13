@@ -33,6 +33,7 @@
       "icons/icon.ico",
       "icons/Square310x310Logo.png"
     ],
+    "externalBin": ["binaries/pandoc"],
     "resources": ["resources/*"]
   }
 }
