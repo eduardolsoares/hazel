@@ -47,7 +47,7 @@ fn load_app_state_invoke() -> js_sys::Promise {
     invoke("load_app_state", args.into())
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq)]
 pub struct Block {
     pub id: usize,
     pub block_type: BlockType,
