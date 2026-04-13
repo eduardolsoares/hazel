@@ -17,6 +17,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build Tauri backend
-      run: cargo build -p hazel --verbose
+      run: cargo tauri build
     - name: Run Tauri backend tests
       run: cargo test -p hazel --verbose
