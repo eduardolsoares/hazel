@@ -1,550 +1,18 @@
-use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+
+use gloo_events::EventListener;
+use serde_json;
+use serde_wasm_bindgen;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures;
+use web_sys;
 use yew::prelude::*;
 use yewdux::prelude::*;
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = ["__TAURI__", "core"], js_name = invoke)]
-    fn invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
-}
 
-fn save_markdown_invoke(content: String, file_path: Option<String>, default_name: Option<String>) -> js_sys::Promise {
-    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
-        "content": content,
-        "filePath": file_path,
-        "defaultName": default_name
-    }))
-    .unwrap();
-
-    invoke("save_markdown", args.into())
-}
-
-fn check_xelatex_invoke() -> js_sys::Promise {
-    let args = serde_wasm_bindgen::to_value(&serde_json::json!({})).unwrap();
-    let promise = invoke("check_xelatex", args.into());
-    promise
-}
-
-fn export_pdf_invoke(content: String, default_name: Option<String>) -> js_sys::Promise {
-    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
-        "content": content,
-        "defaultName": default_name
-    }))
-    .unwrap();
-    invoke("export_pdf", args.into())
-}
-
-fn save_app_state_invoke(state: String) -> js_sys::Promise {
-    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
-        "state": state
-    }))
-    .unwrap();
-    invoke("save_app_state", args.into())
-}
-
-fn load_app_state_invoke() -> js_sys::Promise {
-    let args = serde_wasm_bindgen::to_value(&serde_json::json!({})).unwrap();
-    invoke("load_app_state", args.into())
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Block {
-    pub id: usize,
-    pub block_type: BlockType,
-    pub content: String,
-    pub prev: Option<usize>,
-    pub next: Option<usize>,
-}
-
-impl Block {
-    pub fn new(id: usize, block_type: BlockType) -> Self {
-        Self {
-            id,
-            block_type,
-            content: String::new(),
-            prev: None,
-            next: None,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
-pub enum BlockType {
-    Paragraph,
-    Heading1,
-    Heading2,
-    Heading3,
-    Image,
-    Citation,
-    CodeBlock,
-    BulletList,
-    NumberedList,
-    Quote,
-    HorizontalRule,
-    // Estrutura do texto (ABNT)
-    Introducao,
-    Desenvolvimento,
-    Conclusao,
-    // Ambientes abntex2
-    Teorema,
-    Prova,
-    Definicao,
-    Exemplo,
-    Observacao,
-    CitacaoLonga,
-}
-
-impl Default for Block {
-    fn default() -> Self {
-        Block::new(0, BlockType::Paragraph)
-    }
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Buffer {
-    pub head: Option<usize>,
-    pub tail: Option<usize>,
-    pub blocks: std::collections::HashMap<usize, Block>,
-    pub length: usize,
-}
-
-impl Buffer {
-    pub fn new() -> Self {
-        Self {
-            head: None,
-            tail: None,
-            blocks: std::collections::HashMap::new(),
-            length: 0,
-        }
-    }
-
-    pub fn from_blocks(blocks: Vec<Block>) -> Self {
-        let mut buffer = Self::new();
-        let mut prev_id: Option<usize> = None;
-
-        for block in blocks {
-            let id = block.id;
-            if let Some(prev) = prev_id {
-                if let Some(b) = buffer.blocks.get_mut(&prev) {
-                    b.next = Some(id);
-                }
-            } else {
-                buffer.head = Some(id);
-            }
-            buffer.blocks.insert(
-                id,
-                Block {
-                    prev: prev_id,
-                    ..block
-                },
-            );
-            prev_id = Some(id);
-            buffer.length += 1;
-        }
-
-        if let Some(last_id) = prev_id {
-            buffer.tail = Some(last_id);
-        }
-
-        buffer
-    }
-
-    pub fn push_back(&mut self, block: Block) {
-        let id = block.id;
-
-        if let Some(tail_id) = self.tail {
-            if let Some(b) = self.blocks.get_mut(&tail_id) {
-                b.next = Some(id);
-            }
-        } else {
-            self.head = Some(id);
-        }
-
-        self.blocks.insert(
-            id,
-            Block {
-                prev: self.tail,
-                ..block
-            },
-        );
-        self.tail = Some(id);
-        self.length += 1;
-    }
-
-    pub fn to_vec(&self) -> Vec<Block> {
-        let mut result = Vec::new();
-        let mut current = self.head;
-
-        while let Some(id) = current {
-            if let Some(block) = self.blocks.get(&id) {
-                result.push(block.clone());
-            }
-            current = self.blocks.get(&id).and_then(|b| b.next);
-        }
-
-        result
-    }
-
-    pub fn to_markdown(&self) -> String {
-        let mut markdown = String::new();
-        let mut current = self.head;
-
-        while let Some(id) = current {
-            if let Some(block) = self.blocks.get(&id) {
-                match block.block_type {
-                    BlockType::Heading1 => {
-                        markdown.push_str(&format!("# {}\n\n", block.content));
-                    }
-                    BlockType::Heading2 => {
-                        markdown.push_str(&format!("## {}\n\n", block.content));
-                    }
-                    BlockType::Heading3 => {
-                        markdown.push_str(&format!("### {}\n\n", block.content));
-                    }
-                    BlockType::Paragraph => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("{}\n\n", block.content));
-                        }
-                    }
-                    BlockType::Image => {
-                        markdown.push_str(&format!("![{}]({})\n\n", block.content, block.content));
-                    }
-                    BlockType::Citation => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("> {}\n\n", block.content));
-                        }
-                    }
-                    BlockType::CodeBlock => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("```\n{}\n```\n\n", block.content));
-                        }
-                    }
-                    BlockType::BulletList => {
-                        markdown.push_str(&format!("- {}\n", block.content));
-                    }
-                    BlockType::NumberedList => {
-                        markdown.push_str(&format!("1. {}\n", block.content));
-                    }
-                    BlockType::Quote => {
-                        markdown.push_str(&format!("> {}\n\n", block.content));
-                    }
-                    BlockType::HorizontalRule => {
-                        markdown.push_str("---\n\n");
-                    }
-                    BlockType::Introducao => {
-                        markdown.push_str(&format!("# Introdução\n\n{}\n\n", block.content));
-                    }
-                    BlockType::Desenvolvimento => {
-                        markdown.push_str(&format!("# Desenvolvimento\n\n{}\n\n", block.content));
-                    }
-                    BlockType::Conclusao => {
-                        markdown.push_str(&format!("# Conclusão\n\n{}\n\n", block.content));
-                    }
-                    BlockType::Teorema => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("::: .theorem\n{}\n:::\n\n", block.content));
-                        }
-                    }
-                    BlockType::Prova => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("::: .proof\n{}\n:::\n\n", block.content));
-                        }
-                    }
-                    BlockType::Definicao => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("::: .definition\n{}\n:::\n\n", block.content));
-                        }
-                    }
-                    BlockType::Exemplo => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("::: .example\n{}\n:::\n\n", block.content));
-                        }
-                    }
-                    BlockType::Observacao => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("::: .observation\n{}\n:::\n\n", block.content));
-                        }
-                    }
-                    BlockType::CitacaoLonga => {
-                        if !block.content.is_empty() {
-                            markdown.push_str(&format!("::: citacao\n{}\n:::\n\n", block.content));
-                        }
-                    }
-                }
-            }
-            current = self.blocks.get(&id).and_then(|b| b.next);
-        }
-        markdown
-    }
-}
-
-impl Default for Buffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Tab {
-    pub id: usize,
-    pub name: String,
-    pub title: String,
-    pub buffer: Buffer,
-    pub file_path: Option<String>,
-    pub is_dirty: bool,
-    pub block_order: Vec<usize>,
-    pub saved_content: Option<String>,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct SlashOption {
-    pub block_type: Option<BlockType>,
-    pub label: String,
-    pub icon: &'static str,
-    pub category: Option<String>,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct SlashCategory {
-    pub name: String,
-    pub options: Vec<SlashOption>,
-}
-
-
-#[derive(Clone, PartialEq, Store)]
-pub struct EditorState {
-    pub tabs: Vec<Tab>,
-    pub active_tab_id: usize,
-    pub next_tab_id: usize,
-    pub next_block_id: usize,
-    pub show_slash_menu: bool,
-    pub slash_menu_block_id: Option<usize>,
-    pub focused_block_id: Option<usize>,
-    pub show_save_modal: bool,
-    pub save_modal_filename: String,
-    pub xelatex_available: bool,
-    pub xelatex_version: Option<String>,
-    pub save_modal_export_type: ExportType,
-    pub show_settings_modal: bool,
-    pub dark_mode: bool,
-    pub notification: Option<Notification>,
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Notification {
-    pub message: String,
-    pub is_error: bool,
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct EditorStateDto {
-    pub tabs: Vec<Tab>,
-    pub active_tab_id: usize,
-    pub next_tab_id: usize,
-    pub next_block_id: usize,
-    pub show_settings_modal: bool,
-    pub dark_mode: bool,
-}
-
-impl From<&EditorState> for EditorStateDto {
-    fn from(state: &EditorState) -> Self {
-        Self {
-            tabs: state.tabs.clone(),
-            active_tab_id: state.active_tab_id,
-            next_tab_id: state.next_tab_id,
-            next_block_id: state.next_block_id,
-            show_settings_modal: false,
-            dark_mode: false,
-        }
-    }
-}
-
-impl From<EditorStateDto> for EditorState {
-    fn from(dto: EditorStateDto) -> Self {
-        let mut state = Self::default();
-        state.tabs = dto.tabs;
-        state.active_tab_id = dto.active_tab_id;
-        state.next_tab_id = dto.next_tab_id;
-        state.next_block_id = dto.next_block_id;
-        state.show_settings_modal = dto.show_settings_modal;
-        state.dark_mode = dto.dark_mode;
-        state
-    }
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub enum ExportType {
-    Markdown,
-    Pdf,
-}
-
-impl Default for EditorState {
-    fn default() -> Self {
-        let mut buffer = Buffer::new();
-        buffer.push_back(Block::new(0, BlockType::Paragraph));
-
-        Self {
-            tabs: vec![Tab {
-                id: 0,
-                name: "Sem título.md".to_string(),
-                title: "Sem título".to_string(),
-                buffer,
-                file_path: None,
-                is_dirty: false,
-                block_order: vec![0],
-                saved_content: None,
-            }],
-            active_tab_id: 0,
-            next_tab_id: 1,
-            next_block_id: 1,
-            show_slash_menu: false,
-            slash_menu_block_id: None,
-            focused_block_id: None,
-            show_save_modal: false,
-            save_modal_filename: "Sem título".to_string(),
-            xelatex_available: false,
-            xelatex_version: None,
-            save_modal_export_type: ExportType::Markdown,
-            show_settings_modal: false,
-            dark_mode: false,
-            notification: None,
-        }
-    }
-}
-
-fn get_slash_categories() -> Vec<SlashCategory> {
-    vec![
-        SlashCategory {
-            name: "Básico".to_string(),
-            options: vec![
-                SlashOption {
-                    block_type: Some(BlockType::Paragraph),
-                    label: "Parágrafo".to_string(),
-                    icon: "¶",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Heading1),
-                    label: "Título 1".to_string(),
-                    icon: "H1",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Heading2),
-                    label: "Título 2".to_string(),
-                    icon: "H2",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Heading3),
-                    label: "Título 3".to_string(),
-                    icon: "H3",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::BulletList),
-                    label: "Lista com marcadores".to_string(),
-                    icon: "•",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::NumberedList),
-                    label: "Lista numerada".to_string(),
-                    icon: "1.",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Quote),
-                    label: "Citação".to_string(),
-                    icon: "❝",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::CodeBlock),
-                    label: "Código".to_string(),
-                    icon: "</>",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Image),
-                    label: "Imagem".to_string(),
-                    icon: "🖼",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::HorizontalRule),
-                    label: "Linha horizontal".to_string(),
-                    icon: "—",
-                    category: None,
-                },
-            ],
-        },
-        SlashCategory {
-            name: "Estrutura do Texto".to_string(),
-            options: vec![
-                SlashOption {
-                    block_type: Some(BlockType::Introducao),
-                    label: "Introdução".to_string(),
-                    icon: "#",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Desenvolvimento),
-                    label: "Desenvolvimento".to_string(),
-                    icon: "=",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Conclusao),
-                    label: "Conclusão".to_string(),
-                    icon: "✓",
-                    category: None,
-                },
-            ],
-        },
-        SlashCategory {
-            name: "Ambientes".to_string(),
-            options: vec![
-                SlashOption {
-                    block_type: Some(BlockType::Teorema),
-                    label: "Teorema".to_string(),
-                    icon: "▢",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Prova),
-                    label: "Prova".to_string(),
-                    icon: "∎",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Definicao),
-                    label: "Definição".to_string(),
-                    icon: "≡",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Exemplo),
-                    label: "Exemplo".to_string(),
-                    icon: "ex",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::Observacao),
-                    label: "Observação".to_string(),
-                    icon: "i",
-                    category: None,
-                },
-                SlashOption {
-                    block_type: Some(BlockType::CitacaoLonga),
-                    label: "Citação longa".to_string(),
-                    icon: "❞",
-                    category: None,
-                },
-            ],
-        },
-    ]
-}
+use crate::block::BlockComponent;
+use crate::ipc::*;
+use crate::models::*;
+use crate::slash_menu::SlashMenu;
 
 #[function_component(App)]
 pub fn app() -> Html {
@@ -559,7 +27,7 @@ pub fn app() -> Html {
         })
     };
 
-    let open_save_modal = {
+    let _open_save_modal = {
         let dispatch = dispatch.clone();
         Callback::from(move |_: ()| {
             let state = dispatch.get();
@@ -603,22 +71,34 @@ pub fn app() -> Html {
                     match result {
                         Ok(value) => {
                             web_sys::console::log_1(&format!("Save result: {:?}", value).into());
-                            if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
+                            if let Ok(result_obj) =
+                                serde_wasm_bindgen::from_value::<serde_json::Value>(value)
+                            {
                                 let success = result_obj
                                     .get("success")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false);
-                                web_sys::console::log_1(&format!("Save success: {}", success).into());
+                                web_sys::console::log_1(
+                                    &format!("Save success: {}", success).into(),
+                                );
                                 if success {
                                     dispatch2.reduce_mut(move |state| {
                                         for tab in state.tabs.iter_mut() {
                                             let content = tab.buffer.to_markdown();
-                                            web_sys::console::log_1(&format!("Setting saved_content, len={}", content.len()).into());
+                                            web_sys::console::log_1(
+                                                &format!(
+                                                    "Setting saved_content, len={}",
+                                                    content.len()
+                                                )
+                                                .into(),
+                                            );
                                             tab.saved_content = Some(content);
                                             tab.is_dirty = false;
                                         }
                                     });
-                                    web_sys::console::log_1(&"State saved, is_dirty cleared".into());
+                                    web_sys::console::log_1(
+                                        &"State saved, is_dirty cleared".into(),
+                                    );
                                 }
                             }
                         }
@@ -651,29 +131,45 @@ pub fn app() -> Html {
 
                         match result {
                             Ok(value) => {
-                                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
-                                    let success = result_obj.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                                if let Ok(result_obj) =
+                                    serde_wasm_bindgen::from_value::<serde_json::Value>(value)
+                                {
+                                    let success = result_obj
+                                        .get("success")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
                                     let notification = if success {
-                                        let path = result_obj.get("file_path").and_then(|v| v.as_str())
+                                        let path = result_obj
+                                            .get("file_path")
+                                            .and_then(|v| v.as_str())
                                             .map(|s| format!("Arquivo salvo: {}", s))
                                             .unwrap_or_else(|| "Salvo com sucesso".to_string());
-                                        Notification { message: path, is_error: false }
+                                        Notification {
+                                            message: path,
+                                            is_error: false,
+                                        }
                                     } else {
-                                        let error = result_obj.get("error").and_then(|v| v.as_str())
+                                        let error = result_obj
+                                            .get("error")
+                                            .and_then(|v| v.as_str())
                                             .unwrap_or("Erro ao salvar")
                                             .to_string();
-                                        Notification { message: error, is_error: true }
+                                        Notification {
+                                            message: error,
+                                            is_error: true,
+                                        }
                                     };
                                     dispatch_for_notify.reduce_mut(move |state| {
                                         state.notification = Some(notification);
-                                        if let Some(t) = state.tabs.iter_mut().find(|t| t.id == active_tab_id)
+                                        if let Some(t) =
+                                            state.tabs.iter_mut().find(|t| t.id == active_tab_id)
                                         {
                                             t.is_dirty = false;
                                         }
                                         state.show_save_modal = false;
                                     });
                                 }
-                            },
+                            }
                             Err(_) => {}
                         }
                     });
@@ -682,7 +178,6 @@ pub fn app() -> Html {
                 } else if state.xelatex_available {
                     let default_name = Some(filename.replace(' ', "_"));
 
-                    // Use async/await pattern
                     let content_clone = content.clone();
                     let default_name_clone = default_name.clone();
                     let dispatch_for_notify = dispatch.clone();
@@ -696,28 +191,47 @@ pub fn app() -> Html {
 
                         match result {
                             Ok(value) => {
-                                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(value) {
-                                    let success = result_obj.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    web_sys::console::log_1(&format!("Export success: {}", success).into());
+                                if let Ok(result_obj) =
+                                    serde_wasm_bindgen::from_value::<serde_json::Value>(value)
+                                {
+                                    let success = result_obj
+                                        .get("success")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    web_sys::console::log_1(
+                                        &format!("Export success: {}", success).into(),
+                                    );
 
                                     let notification = if success {
-                                        let path = result_obj.get("file_path").and_then(|v| v.as_str())
+                                        let path = result_obj
+                                            .get("file_path")
+                                            .and_then(|v| v.as_str())
                                             .map(|s| format!("PDF salvo em: {}", s))
                                             .unwrap_or_else(|| "PDF salvo com sucesso".to_string());
-                                        Notification { message: path, is_error: false }
+                                        Notification {
+                                            message: path,
+                                            is_error: false,
+                                        }
                                     } else {
-                                        let error = result_obj.get("error").and_then(|v| v.as_str())
+                                        let error = result_obj
+                                            .get("error")
+                                            .and_then(|v| v.as_str())
                                             .unwrap_or("Erro ao exportar PDF")
                                             .to_string();
-                                        Notification { message: error, is_error: true }
+                                        Notification {
+                                            message: error,
+                                            is_error: true,
+                                        }
                                     };
                                     dispatch_for_notify.reduce_mut(move |state| {
                                         state.notification = Some(notification);
                                     });
                                 }
-                            },
+                            }
                             Err(e) => {
-                                web_sys::console::log_1(&format!("PDF export error: {:?}", e).into());
+                                web_sys::console::log_1(
+                                    &format!("PDF export error: {:?}", e).into(),
+                                );
                             }
                         }
                     });
@@ -738,7 +252,7 @@ pub fn app() -> Html {
         })
     };
 
-    let update_modal_filename = {
+    let _update_modal_filename = {
         let dispatch = dispatch.clone();
         Callback::from(move |filename: String| {
             dispatch.reduce_mut(move |state| {
@@ -747,7 +261,7 @@ pub fn app() -> Html {
         })
     };
 
-    let set_export_type = {
+    let _set_export_type = {
         let dispatch = dispatch.clone();
         Callback::from(move |export_type: ExportType| {
             dispatch.reduce_mut(move |state| {
@@ -798,10 +312,9 @@ pub fn app() -> Html {
     });
 
     {
-        use std::sync::OnceLock;
+        let dispatch = dispatch.clone();
         static CHECKED: OnceLock<()> = OnceLock::new();
 
-        let dispatch = dispatch.clone();
         if CHECKED.get().is_none() {
             let _ = CHECKED.set(());
 
@@ -812,7 +325,8 @@ pub fn app() -> Html {
                     Err(_) => return,
                 };
 
-                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result) {
+                if let Ok(result_obj) = serde_wasm_bindgen::from_value::<serde_json::Value>(result)
+                {
                     if let Some(available) = result_obj.get("available").and_then(|v| v.as_bool()) {
                         let version = result_obj
                             .get("version")
@@ -831,9 +345,6 @@ pub fn app() -> Html {
     let dispatch_for_keys = dispatch.clone();
 
     use_effect(move || {
-        use gloo_events::EventListener;
-        use std::sync::OnceLock;
-
         static REGISTERED: OnceLock<()> = OnceLock::new();
 
         if REGISTERED.get().is_none() {
@@ -949,7 +460,9 @@ pub fn app() -> Html {
             if let Some(bt) = block_type {
                 dispatch.reduce_mut(move |state| {
                     if let Some(block_id) = state.slash_menu_block_id {
-                        if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                        if let Some(tab) =
+                            state.tabs.iter_mut().find(|t| t.id == state.active_tab_id)
+                        {
                             if let Some(block) = tab.buffer.blocks.get_mut(&block_id) {
                                 block.block_type = bt.clone();
                                 block.content = String::new();
@@ -1055,7 +568,10 @@ pub fn app() -> Html {
                     }
                     let current_content = tab.buffer.to_markdown();
                     let saved = tab.saved_content.clone();
-                    let is_same = saved.as_ref().map(|s| s == &current_content).unwrap_or(false);
+                    let is_same = saved
+                        .as_ref()
+                        .map(|s| s == &current_content)
+                        .unwrap_or(false);
                     tab.is_dirty = !is_same;
                 }
             });
@@ -1084,7 +600,10 @@ pub fn app() -> Html {
                     }
                     let current_content = tab.buffer.to_markdown();
                     let saved = tab.saved_content.clone();
-                    let is_same = saved.as_ref().map(|s| s == &current_content).unwrap_or(false);
+                    let is_same = saved
+                        .as_ref()
+                        .map(|s| s == &current_content)
+                        .unwrap_or(false);
                     tab.is_dirty = !is_same;
                 }
             });
@@ -1427,357 +946,6 @@ pub fn app() -> Html {
             } else {
                 html! {}
             }}
-        </div>
-    }
-}
-
-#[derive(Properties, PartialEq)]
-pub struct BlockProps {
-    pub block: Block,
-    pub on_show_slash_menu: Callback<usize>,
-    pub on_keydown: Callback<String>,
-    pub on_backspace: Callback<usize>,
-    pub on_delete: Callback<usize>,
-    pub on_change: Callback<(usize, String)>,
-    pub on_blur: Callback<(usize, String)>,
-    pub on_enter: Callback<usize>,
-    pub on_up_arrow: Callback<usize>,
-    pub on_down_arrow: Callback<usize>,
-    pub on_focus: Callback<usize>,
-    pub focused_block_id: Option<usize>,
-}
-
-#[function_component(BlockComponent)]
-pub fn block_component(props: &BlockProps) -> Html {
-    let content_ref = use_node_ref();
-
-    let oninput = {
-        let on_show_slash_menu = props.on_show_slash_menu.clone();
-        let on_change = props.on_change.clone();
-        let block_id = props.block.id;
-        Callback::from(move |e: InputEvent| {
-            if let Some(target) = e.target_dyn_into::<web_sys::HtmlElement>() {
-                let text = target.text_content().unwrap_or_default();
-                if let Some(input_data) = e.data() {
-                    if input_data == "/" {
-                        on_show_slash_menu.emit(block_id);
-                    }
-                }
-                on_change.emit((block_id, text));
-            }
-        })
-    };
-
-    let onblur = {
-        let on_blur = props.on_blur.clone();
-        let block_id = props.block.id;
-        let content_ref = content_ref.clone();
-        Callback::from(move |_: FocusEvent| {
-            if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
-                let text = element.text_content().unwrap_or_default();
-                on_blur.emit((block_id, text));
-            }
-        })
-    };
-
-    let onkeydown = {
-        let on_enter = props.on_enter.clone();
-        let on_up_arrow = props.on_up_arrow.clone();
-        let on_down_arrow = props.on_down_arrow.clone();
-        let on_backspace = props.on_backspace.clone();
-        let on_delete = props.on_delete.clone();
-        let on_keydown = props.on_keydown.clone();
-        let block_id = props.block.id;
-        let block_content = props.block.content.clone();
-        let on_change = props.on_change.clone();
-        let block_id_for_change = props.block.id;
-        let content_ref_for_change = content_ref.clone();
-        Callback::from(move |e: KeyboardEvent| {
-            let key = e.key();
-            if key == "Enter" {
-                if e.shift_key() {
-                    let block_id = block_id_for_change;
-                    let on_change = on_change.clone();
-                    let content_ref = content_ref_for_change.clone();
-                    let _ = gloo_timers::callback::Timeout::new(5, move || {
-                        if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
-                            let text = element.text_content().unwrap_or_default();
-                            on_change.emit((block_id, text));
-                        }
-                    });
-                } else {
-                    e.prevent_default();
-                    on_enter.emit(block_id);
-                }
-            } else if key == "ArrowUp" {
-                if let Some(selection) =
-                    web_sys::window().and_then(|w| w.get_selection().ok().flatten())
-                {
-                    if let Ok(range) = selection.get_range_at(0) {
-                        if let Ok(start) = range.start_offset() {
-                            let start = start as usize;
-                            if let Some(node) = range.start_container().ok() {
-                                if let Some(content) = node.text_content() {
-                                    if content[..start.min(content.len())].contains('\n') {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                e.prevent_default();
-                on_up_arrow.emit(block_id);
-            } else if key == "ArrowDown" {
-                if let Some(selection) =
-                    web_sys::window().and_then(|w| w.get_selection().ok().flatten())
-                {
-                    if let Ok(range) = selection.get_range_at(0) {
-                        if let Ok(start) = range.start_offset() {
-                            let start = start as usize;
-                            if let Some(node) = range.start_container().ok() {
-                                if let Some(content) = node.text_content() {
-                                    if start < content.len() && content[start..].contains('\n') {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                e.prevent_default();
-                on_down_arrow.emit(block_id);
-            } else if key == "Backspace" {
-                if block_content.is_empty() {
-                    e.prevent_default();
-                    on_backspace.emit(block_id);
-                }
-            } else if key == "Delete" {
-                if block_content.is_empty() {
-                    e.prevent_default();
-                    on_delete.emit(block_id);
-                }
-            } else if key == "ArrowLeft" || key == "ArrowRight" {
-                // Allow default cursor movement
-            } else {
-                on_keydown.emit(key);
-            }
-        })
-    };
-
-    let block_id = props.block.id;
-    {
-        let content_ref = content_ref.clone();
-        let content = props.block.content.clone();
-        let focused_id = props.focused_block_id;
-        use_effect(move || {
-            if focused_id != Some(block_id) {
-                if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
-                    let current = element.text_content().unwrap_or_default();
-                    if content.is_empty() {
-                        if !current.is_empty() {
-                            element.set_text_content(Some(&content));
-                        }
-                    } else if current.is_empty() {
-                        element.set_text_content(Some(&content));
-                    }
-                }
-            }
-            || {}
-        });
-    }
-
-    {
-        let content_ref = content_ref.clone();
-        let focused_id = props.focused_block_id;
-        let block_id = props.block.id;
-        use_effect(move || {
-            if focused_id == Some(block_id) {
-                if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
-                    element.focus().ok();
-                }
-            }
-            || {}
-        });
-    }
-
-    let show_placeholder = props.block.id == 0 && matches!(props.block.block_type, BlockType::Paragraph);
-    let placeholder = if show_placeholder { "Type / for commands, or start writing" } else { "" };
-
-    let block_type_class = match props.block.block_type {
-        BlockType::Paragraph => "block-paragraph",
-        BlockType::Heading1 => "block-heading-1",
-        BlockType::Heading2 => "block-heading-2",
-        BlockType::Heading3 => "block-heading-3",
-        BlockType::BulletList => "block-bullet-list",
-        BlockType::NumberedList => "block-numbered-list",
-        BlockType::Quote => "block-quote",
-        BlockType::CodeBlock => "block-code",
-        BlockType::Image => "block-image",
-        BlockType::HorizontalRule => "block-hr",
-        BlockType::Citation => "block-citation",
-        BlockType::Introducao => "block-introducao",
-        BlockType::Desenvolvimento => "block-desenvolvimento",
-        BlockType::Conclusao => "block-conclusao",
-        BlockType::Teorema => "block-teorema",
-        BlockType::Prova => "block-prova",
-        BlockType::Definicao => "block-definicao",
-        BlockType::Exemplo => "block-exemplo",
-        BlockType::Observacao => "block-observacao",
-        BlockType::CitacaoLonga => "block-citacao-longa",
-    };
-
-    html! {
-        <div class={classes!("block", block_type_class)}>
-            <div
-                ref={content_ref}
-                class="block-content"
-                contenteditable="true"
-                data-placeholder={placeholder}
-                oninput={oninput}
-                onblur={onblur}
-                onkeydown={onkeydown}
-            />
-        </div>
-    }
-}
-
-#[derive(Properties, PartialEq)]
-pub struct SlashMenuProps {
-    pub categories: Vec<SlashCategory>,
-    pub on_select: Callback<Option<BlockType>>,
-    pub on_close: Callback<()>,
-}
-
-#[function_component(SlashMenu)]
-pub fn slash_menu(props: &SlashMenuProps) -> Html {
-    let selected_category = use_state(|| 0usize);
-    let selected_index = use_state(|| 0usize);
-
-    let on_click = {
-        let on_select = props.on_select.clone();
-        let on_close = props.on_close.clone();
-        Callback::from(move |block_type: Option<BlockType>| {
-            on_select.emit(block_type);
-            on_close.emit(());
-        })
-    };
-
-    let categories = &props.categories;
-    let total_categories = categories.len();
-    let active_cat = *selected_category;
-
-    {
-        let selected_cat = selected_category.clone();
-        let selected_idx = selected_index.clone();
-        let on_close = props.on_close.clone();
-        let on_select = props.on_select.clone();
-        let cats = props.categories.clone();
-        let tot_cats = total_categories;
-
-        use_effect(move || {
-            let handle_keydown = move |e: web_sys::KeyboardEvent| match e.key().as_str() {
-                "ArrowRight" => {
-                    e.prevent_default();
-                    let new_cat = (*selected_cat + 1) % tot_cats;
-                    selected_cat.set(new_cat);
-                    selected_idx.set(0);
-                }
-                "ArrowLeft" => {
-                    e.prevent_default();
-                    let new_cat = if *selected_cat == 0 { tot_cats - 1 } else { *selected_cat - 1 };
-                    selected_cat.set(new_cat);
-                    selected_idx.set(0);
-                }
-                "ArrowDown" => {
-                    e.prevent_default();
-                    let len = cats[*selected_cat].options.len();
-                    let new_val = (*selected_idx + 1) % len;
-                    selected_idx.set(new_val);
-                }
-                "ArrowUp" => {
-                    e.prevent_default();
-                    let len = cats[*selected_cat].options.len();
-                    let new_val = if *selected_idx == 0 { len - 1 } else { *selected_idx - 1 };
-                    selected_idx.set(new_val);
-                }
-                "Enter" => {
-                    e.prevent_default();
-                    let options = &cats[*selected_cat].options;
-                    if *selected_idx < options.len() {
-                        if let Some(bt) = options[*selected_idx].block_type.clone() {
-                            on_select.emit(Some(bt));
-                            on_close.emit(());
-                        }
-                    }
-                }
-                "Escape" => {
-                    on_close.emit(());
-                }
-                _ => {}
-            };
-
-            let closure =
-                wasm_bindgen::closure::Closure::wrap(Box::new(handle_keydown) as Box<dyn Fn(_)>);
-
-            if let Some(window) = web_sys::window() {
-                window
-                    .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
-                    .ok();
-            }
-            closure.forget();
-
-            || {}
-        });
-    }
-
-    let set_category = {
-        let selected_category = selected_category.clone();
-        let selected_index = selected_index.clone();
-        Callback::from(move |cat_idx: usize| {
-            selected_category.set(cat_idx);
-            selected_index.set(0);
-        })
-    };
-
-    html! {
-        <div class="slash-menu">
-            <div class="slash-menu-categories">
-                {for categories.iter().enumerate().map(|(i, cat)| {
-                    let is_selected = *selected_category == i;
-                    let set_cat = set_category.clone();
-                    html! {
-                        <div
-                            class={classes!("slash-menu-cat", if is_selected { "selected" } else { "" })}
-                            onmouseenter={move |_| set_cat.emit(i)}
-                        >
-                            {&cat.name}
-                        </div>
-                    }
-                })}
-            </div>
-            <div class="slash-menu-items">
-                <div class="slash-menu-items-inner">
-                    {for categories[active_cat].options.iter().enumerate().map(|(i, option)| {
-                        let is_selected = *selected_index == i;
-                        let on_click = on_click.clone();
-                        if let Some(ref bt) = option.block_type {
-                            let option_block_type = bt.clone();
-                            html! {
-                                <div
-                                    class={classes!("slash-menu-item", if is_selected { "selected" } else { "" })}
-                                    onclick={move |_| on_click.emit(Some(option_block_type.clone()))}
-                                >
-                                    <span class="slash-menu-icon">{option.icon}</span>
-                                    <span class="slash-menu-label">{&option.label}</span>
-                                </div>
-                            }
-                        } else {
-                            html! {}
-                        }
-                    })}
-                </div>
-            </div>
         </div>
     }
 }
