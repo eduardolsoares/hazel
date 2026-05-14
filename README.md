@@ -30,7 +30,7 @@ Install these system dependencies before running Hazel:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/hazel.git
+git clone https://github.com/eduardolsoares/hazel.git
 cd hazel
 
 # Build the Tauri backend
