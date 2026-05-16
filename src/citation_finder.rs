@@ -40,7 +40,7 @@ fn format_abnt(work: &Work) -> String {
     };
 
     let title = work.title.trim().trim_end_matches('.');
-    let year = work.year.as_deref().unwrap_or("s.d.");
+    let year = work.year.as_deref().unwrap_or("s.d.").trim_end_matches('.');
 
     match work.work_type.as_str() {
         "journal-article" | "journal-issue" => {
@@ -350,35 +350,43 @@ pub fn citation_finder(props: &CitationFinderProps) -> Html {
         let on_insert = on_insert.clone();
         let on_close = on_close.clone();
         Callback::from(move |idx: usize| {
-            if idx < results.len() {
+            let len = results.len();
+            web_sys::console::log_1(&format!("[citation_finder] insert_citation called: idx={}, results.len={}", idx, len).into());
+            if idx < len {
                 let citation = format_abnt(&results[idx]);
+                web_sys::console::log_1(&format!("[citation_finder] citation formatted: '{}'", citation).into());
                 on_insert.emit(citation);
+                web_sys::console::log_1(&"[citation_finder] on_insert.emit done, now calling on_close".into());
                 on_close.emit(());
+                web_sys::console::log_1(&"[citation_finder] on_close.emit done".into());
+            } else {
+                web_sys::console::log_1(&format!("[citation_finder] SKIP: idx={} >= len={}", idx, len).into());
             }
         })
     };
 
     let onkeydown = {
         let selected_index = selected_index.clone();
-        let results_len = results.len();
         let insert_citation = insert_citation.clone();
         let on_close = on_close.clone();
+        let results = results.clone();
         Callback::from(move |e: KeyboardEvent| {
+            let results_len = results.len();
             match e.key().as_str() {
                 "ArrowDown" => {
                     e.prevent_default();
-                    let len = results_len;
-                    if len > 0 {
-                        let new_idx = (*selected_index + 1) % len;
+                    web_sys::console::log_1(&"[citation_finder] key: ArrowDown".into());
+                    if results_len > 0 {
+                        let new_idx = (*selected_index + 1) % results_len;
                         selected_index.set(new_idx);
                     }
                 }
                 "ArrowUp" => {
                     e.prevent_default();
-                    let len = results_len;
-                    if len > 0 {
+                    web_sys::console::log_1(&"[citation_finder] key: ArrowUp".into());
+                    if results_len > 0 {
                         let new_idx = if *selected_index == 0 {
-                            len - 1
+                            results_len - 1
                         } else {
                             *selected_index - 1
                         };
@@ -387,13 +395,14 @@ pub fn citation_finder(props: &CitationFinderProps) -> Html {
                 }
                 "Enter" => {
                     e.prevent_default();
-                    let len = results_len;
-                    if len > 0 && *selected_index < len {
+                    web_sys::console::log_1(&format!("[citation_finder] key: Enter, selected={}, results_len={}", *selected_index, results_len).into());
+                    if results_len > 0 && *selected_index < results_len {
                         insert_citation.emit(*selected_index);
                     }
                 }
                 "Escape" => {
                     e.prevent_default();
+                    web_sys::console::log_1(&"[citation_finder] key: Escape".into());
                     on_close.emit(());
                 }
                 _ => {}
@@ -452,16 +461,20 @@ pub fn citation_finder(props: &CitationFinderProps) -> Html {
                     }}
                     {for results.iter().enumerate().map(|(i, work)| {
                         let is_selected = i == *selected_index;
-                        let onclick = {
+                        let on_click = {
+                            let selected_index = selected_index.clone();
                             let insert_citation = insert_citation.clone();
-                            Callback::from(move |_| insert_citation.emit(i))
+                            Callback::from(move |_| {
+                                selected_index.set(i);
+                                insert_citation.emit(i);
+                            })
                         };
                         let authors = work.authors.join("; ");
                         let journal = work.journal.as_deref().unwrap_or("");
                         let year = work.year.as_deref().unwrap_or("");
                         html! {
                             <div class={classes!("citation-finder-item", if is_selected { "selected" } else { "" })}
-                                onclick={onclick}
+                                onclick={on_click}
                                 onmouseenter={let selected_index = selected_index.clone(); Callback::from(move |_| selected_index.set(i))}
                             >
                                 <div class="citation-finder-item-title">
@@ -490,5 +503,234 @@ pub fn citation_finder(props: &CitationFinderProps) -> Html {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    fn make_work(
+        title: &str,
+        authors: Vec<&str>,
+        year: Option<&str>,
+        journal: Option<&str>,
+        volume: Option<&str>,
+        issue: Option<&str>,
+        pages: Option<&str>,
+        publisher: Option<&str>,
+        work_type: &str,
+    ) -> Work {
+        Work {
+            doi: None,
+            title: title.to_string(),
+            authors: authors.into_iter().map(|a| a.to_string()).collect(),
+            year: year.map(|y| y.to_string()),
+            journal: journal.map(|j| j.to_string()),
+            volume: volume.map(|v| v.to_string()),
+            issue: issue.map(|i| i.to_string()),
+            pages: pages.map(|p| p.to_string()),
+            publisher: publisher.map(|p| p.to_string()),
+            work_type: work_type.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_format_abnt_journal_article_full() {
+        let work = make_work(
+            "A importância da pesquisa científica",
+            vec!["SILVA, João", "SOUZA, Maria"],
+            Some("2023"),
+            Some("Revista Brasileira de Ciência"),
+            Some("10"),
+            Some("2"),
+            Some("15-30"),
+            None,
+            "journal-article",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "SILVA, João; SOUZA, Maria. A importância da pesquisa científica. *Revista Brasileira de Ciência*, v. 10, n. 2, p. 15-30, 2023."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_journal_article_minimal() {
+        let work = make_work(
+            "A study on machine learning",
+            vec!["MARTINS, Ana"],
+            Some("2021"),
+            Some("Journal of AI"),
+            None,
+            None,
+            None,
+            None,
+            "journal-article",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "MARTINS, Ana. A study on machine learning. *Journal of AI*, 2021."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_book() {
+        let work = make_work(
+            "Fundamentos da física quântica",
+            vec!["OLIVEIRA, Carlos"],
+            Some("2020"),
+            None,
+            None,
+            None,
+            None,
+            Some("Editora Acadêmica"),
+            "book",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "OLIVEIRA, Carlos. Fundamentos da física quântica. Editora Acadêmica; 2020."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_book_chapter() {
+        let work = make_work(
+            "Introdução à análise de dados",
+            vec!["LIMA, Rafael"],
+            Some("2022"),
+            None,
+            None,
+            None,
+            None,
+            Some("Editora Tech"),
+            "book-section",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "LIMA, Rafael. Introdução à análise de dados. Editora Tech; 2022."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_conference() {
+        let work = make_work(
+            "Redes neurais aplicadas à medicina",
+            vec!["COSTA, Beatriz", "SANTOS, Pedro"],
+            Some("2023"),
+            Some("Congresso Brasileiro de Computação"),
+            Some("5"),
+            None,
+            Some("100-110"),
+            Some("SBC"),
+            "paper-conference",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "COSTA, Beatriz; SANTOS, Pedro. Redes neurais aplicadas à medicina. In: Congresso Brasileiro de Computação, v. 5, p. 100-110 SBC; 2023."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_no_authors() {
+        let work = make_work(
+            "Anonymous publication",
+            vec![],
+            Some("2020"),
+            Some("Some Journal"),
+            Some("5"),
+            None,
+            None,
+            None,
+            "journal-article",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "Anonymous publication. *Some Journal*, v. 5, 2020."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_no_year() {
+        let work = make_work(
+            "Undated work",
+            vec!["AUTOR, Anonimo"],
+            None,
+            Some("Revista X"),
+            None,
+            None,
+            None,
+            None,
+            "journal-article",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "AUTOR, Anonimo. Undated work. *Revista X*, s.d."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_dissertation() {
+        let work = make_work(
+            "Tese de doutorado em engenharia",
+            vec!["FERREIRA, Lucas"],
+            Some("2023"),
+            None,
+            None,
+            None,
+            None,
+            Some("USP"),
+            "dissertation",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "FERREIRA, Lucas. Tese de doutorado em engenharia. USP; 2023."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_unknown_type() {
+        let work = make_work(
+            "Some other type of work",
+            vec!["AUTHOR, Test"],
+            Some("2023"),
+            None,
+            None,
+            None,
+            None,
+            Some("Some Publisher"),
+            "other",
+        );
+        let result = format_abnt(&work);
+        assert_eq!(
+            result,
+            "AUTHOR, Test. Some other type of work. Some Publisher; 2023."
+        );
+    }
+
+    #[test]
+    fn test_format_abnt_title_trailing_dot_stripped() {
+        let work = make_work(
+            "Title with trailing dot.",
+            vec!["AUTHOR, Test"],
+            Some("2023"),
+            Some("Journal"),
+            None,
+            None,
+            None,
+            None,
+            "journal-article",
+        );
+        let result = format_abnt(&work);
+        assert!(!result.contains(".."));
+        assert!(result.contains("Title with trailing dot"));
     }
 }

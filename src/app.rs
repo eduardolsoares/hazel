@@ -499,7 +499,9 @@ pub fn app() -> Html {
     let insert_citation = {
         let dispatch = dispatch.clone();
         Callback::from(move |citation: String| {
+            web_sys::console::log_1(&format!("[app] insert_citation called: '{}'", citation).into());
             dispatch.reduce_mut(move |state| {
+                web_sys::console::log_1(&"[app] reduce_mut running".into());
                 if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
                     let new_block_id = state.next_block_id;
                     state.next_block_id += 1;
@@ -507,42 +509,25 @@ pub fn app() -> Html {
                     let mut new_block = Block::new(new_block_id, BlockType::Paragraph);
                     new_block.content = citation;
 
-                    let insert_after = state.focused_block_id.and_then(|fid| {
+                    let after_id = state.focused_block_id
+                        .filter(|&fid| tab.block_order.contains(&fid));
+
+                    let insertion_pos = after_id.and_then(|fid| {
                         tab.block_order.iter().position(|&id| id == fid)
                     });
 
-                    if let Some(pos) = insert_after {
-                        let after_id = tab.block_order[pos];
-                        if let Some(current_block) = tab.buffer.blocks.get_mut(&after_id) {
-                            let next_id = current_block.next;
-                            current_block.next = Some(new_block_id);
-                            new_block.prev = Some(after_id);
-                            new_block.next = next_id;
-                            if let Some(nid) = next_id {
-                                if let Some(next_block) = tab.buffer.blocks.get_mut(&nid) {
-                                    next_block.prev = Some(new_block_id);
-                                }
-                            } else {
-                                tab.buffer.tail = Some(new_block_id);
-                            }
-                        }
-                        tab.buffer.blocks.insert(new_block_id, new_block);
-                        tab.block_order.insert(pos + 1, new_block_id);
+                    let new_id = tab.buffer.insert_after(new_block, after_id);
+
+                    if let Some(pos) = insertion_pos {
+                        tab.block_order.insert(pos + 1, new_id);
                     } else {
-                        if let Some(tail_id) = tab.buffer.tail {
-                            if let Some(tail) = tab.buffer.blocks.get_mut(&tail_id) {
-                                tail.next = Some(new_block_id);
-                            }
-                            new_block.prev = Some(tail_id);
-                        } else {
-                            tab.buffer.head = Some(new_block_id);
-                        }
-                        tab.buffer.tail = Some(new_block_id);
-                        tab.buffer.blocks.insert(new_block_id, new_block);
-                        tab.block_order.push(new_block_id);
+                        tab.block_order.push(new_id);
                     }
 
-                    state.focused_block_id = Some(new_block_id);
+                    web_sys::console::log_1(&format!("[app] block inserted: id={}, order len={}", new_id, tab.block_order.len()).into());
+                    state.focused_block_id = Some(new_id);
+                } else {
+                    web_sys::console::log_1(&"[app] ERROR: active tab not found!".into());
                 }
                 state.show_citation_finder = false;
             });

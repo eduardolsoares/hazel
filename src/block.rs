@@ -142,16 +142,16 @@ pub fn block_component(props: &BlockProps) -> Html {
         let content = props.block.content.clone();
         let focused_id = props.focused_block_id;
         use_effect(move || {
-            if focused_id != Some(block_id) {
-                if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
-                    let current = element.text_content().unwrap_or_default();
-                    if content.is_empty() {
-                        if !current.is_empty() {
-                            element.set_text_content(Some(&content));
-                        }
-                    } else if current.is_empty() {
-                        element.set_text_content(Some(&content));
-                    }
+            if let Some(element) = content_ref.cast::<web_sys::HtmlElement>() {
+                let current = element.text_content().unwrap_or_default();
+                let should_update = if focused_id == Some(block_id) {
+                    current.is_empty() && !content.is_empty()
+                } else {
+                    (content.is_empty() && !current.is_empty())
+                        || (!content.is_empty() && current.is_empty())
+                };
+                if should_update {
+                    element.set_text_content(Some(&content));
                 }
             }
             || {}
