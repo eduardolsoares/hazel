@@ -44,7 +44,7 @@ jobs:
         run: cargo binstall tauri-cli -y
 
       - name: Build Tauri App
-        run: cargo tauri build
+        run: source $HOME/.cargo/env & cargo tauri build
 
       - name: Run backend tests
         run: cargo test -p hazel --verbose
