@@ -10,6 +10,7 @@ use yew::prelude::*;
 use yewdux::prelude::*;
 
 use crate::block::BlockComponent;
+use crate::citation_finder::CitationFinder;
 use crate::ipc::*;
 use crate::models::*;
 use crate::slash_menu::SlashMenu;
@@ -477,6 +478,77 @@ pub fn app() -> Html {
         })
     };
 
+    let toggle_citation_finder = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            dispatch.reduce_mut(move |state| {
+                state.show_citation_finder = !state.show_citation_finder;
+            });
+        })
+    };
+
+    let close_citation_finder = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            dispatch.reduce_mut(move |state| {
+                state.show_citation_finder = false;
+            });
+        })
+    };
+
+    let insert_citation = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |citation: String| {
+            dispatch.reduce_mut(move |state| {
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    let new_block_id = state.next_block_id;
+                    state.next_block_id += 1;
+
+                    let mut new_block = Block::new(new_block_id, BlockType::Paragraph);
+                    new_block.content = citation;
+
+                    let insert_after = state.focused_block_id.and_then(|fid| {
+                        tab.block_order.iter().position(|&id| id == fid)
+                    });
+
+                    if let Some(pos) = insert_after {
+                        let after_id = tab.block_order[pos];
+                        if let Some(current_block) = tab.buffer.blocks.get_mut(&after_id) {
+                            let next_id = current_block.next;
+                            current_block.next = Some(new_block_id);
+                            new_block.prev = Some(after_id);
+                            new_block.next = next_id;
+                            if let Some(nid) = next_id {
+                                if let Some(next_block) = tab.buffer.blocks.get_mut(&nid) {
+                                    next_block.prev = Some(new_block_id);
+                                }
+                            } else {
+                                tab.buffer.tail = Some(new_block_id);
+                            }
+                        }
+                        tab.buffer.blocks.insert(new_block_id, new_block);
+                        tab.block_order.insert(pos + 1, new_block_id);
+                    } else {
+                        if let Some(tail_id) = tab.buffer.tail {
+                            if let Some(tail) = tab.buffer.blocks.get_mut(&tail_id) {
+                                tail.next = Some(new_block_id);
+                            }
+                            new_block.prev = Some(tail_id);
+                        } else {
+                            tab.buffer.head = Some(new_block_id);
+                        }
+                        tab.buffer.tail = Some(new_block_id);
+                        tab.buffer.blocks.insert(new_block_id, new_block);
+                        tab.block_order.push(new_block_id);
+                    }
+
+                    state.focused_block_id = Some(new_block_id);
+                }
+                state.show_citation_finder = false;
+            });
+        })
+    };
+
     let handle_enter = {
         let dispatch = dispatch.clone();
         Callback::from(move |block_id: usize| {
@@ -661,6 +733,9 @@ pub fn app() -> Html {
                 </div>
                 <button class="new-tab-btn" onclick={add_tab}>
                     {"+"}
+                </button>
+                <button class="citation-finder-btn" onclick={toggle_citation_finder.clone()}>
+                    <span class="citation-finder-btn-icon">{"\u{1F50D}"}</span>
                 </button>
             </div>
 
@@ -931,6 +1006,17 @@ pub fn app() -> Html {
                             </div>
                         </div>
                     </div>
+                }
+            } else {
+                html! {}
+            }}
+
+            {if state.show_citation_finder {
+                html! {
+                    <CitationFinder
+                        on_insert={insert_citation.clone()}
+                        on_close={close_citation_finder.clone()}
+                    />
                 }
             } else {
                 html! {}

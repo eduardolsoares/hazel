@@ -253,6 +253,7 @@ pub struct EditorState {
     pub show_settings_modal: bool,
     pub dark_mode: bool,
     pub notification: Option<Notification>,
+    pub show_citation_finder: bool,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -333,6 +334,7 @@ impl Default for EditorState {
             show_settings_modal: false,
             dark_mode: false,
             notification: None,
+            show_citation_finder: false,
         }
     }
 }
