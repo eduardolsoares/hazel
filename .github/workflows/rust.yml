@@ -38,7 +38,7 @@ jobs:
         run: echo "$CARGO_HOME/bin" >> $GITHUB_PATH
 
       - name: Install Trunk
-        run: cargo binstall trunk -y echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: cargo binstall trunk -y
 
       - name: Install Tauri CLI
         run: cargo binstall tauri-cli -y
