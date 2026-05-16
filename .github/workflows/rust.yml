@@ -2,9 +2,9 @@ name: Rust Build and Release
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: ["main", "develop"]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: ["main", "develop"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,8 +34,11 @@ jobs:
       - name: Install cargo-binstall
         run: cargo install cargo-binstall
 
+      - name: Add cargo bin to PATH
+        run: echo "$CARGO_HOME/bin" >> $GITHUB_PATH
+
       - name: Install Trunk
-        run: cargo binstall trunk -y
+        run: cargo binstall trunk -y echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install Tauri CLI
         run: cargo binstall tauri-cli -y
