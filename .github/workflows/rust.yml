@@ -28,26 +28,19 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Rust Cache
-        uses: swatinem/rust-cache@v2
-
-      # 1. Download cargo-binstall binary directly instead of compiling it
       - name: Install cargo-binstall
         run: |
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 
-      # 2. Add cargo bin to PATH so ALL subsequent steps can see it
       - name: Add cargo bin to PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      # 3. These steps will now correctly respect the updated GITHUB_PATH
       - name: Install Trunk
         run: cargo binstall trunk -y
 
       - name: Install Tauri CLI
         run: cargo binstall tauri-cli -y
 
-      # 4. Removed 'source $HOME/.cargo/env' as GITHUB_PATH handles this cleanly now
       - name: Build Tauri App
         run: cargo tauri build
 
