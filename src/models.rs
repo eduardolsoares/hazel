@@ -106,6 +106,49 @@ impl Buffer {
         result
     }
 
+    pub fn insert_after(&mut self, block: Block, after_id: Option<usize>) -> usize {
+        let id = block.id;
+
+        if let Some(after) = after_id {
+            if let Some(current) = self.blocks.get_mut(&after) {
+                let next_id = current.next;
+                current.next = Some(id);
+
+                let mut new_block = block;
+                new_block.prev = Some(after);
+                new_block.next = next_id;
+
+                if let Some(nid) = next_id {
+                    if let Some(next) = self.blocks.get_mut(&nid) {
+                        next.prev = Some(id);
+                    }
+                } else {
+                    self.tail = Some(id);
+                }
+
+                self.blocks.insert(id, new_block);
+            } else {
+                self.push_back(block);
+            }
+        } else {
+            if let Some(tail_id) = self.tail {
+                if let Some(tail) = self.blocks.get_mut(&tail_id) {
+                    tail.next = Some(id);
+                }
+                let mut new_block = block;
+                new_block.prev = Some(tail_id);
+                self.blocks.insert(id, new_block);
+            } else {
+                self.blocks.insert(id, Block { prev: None, ..block });
+                self.head = Some(id);
+            }
+            self.tail = Some(id);
+        }
+
+        self.length += 1;
+        id
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
         let mut current = self.head;
@@ -253,6 +296,7 @@ pub struct EditorState {
     pub show_settings_modal: bool,
     pub dark_mode: bool,
     pub notification: Option<Notification>,
+    pub show_citation_finder: bool,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -333,6 +377,7 @@ impl Default for EditorState {
             show_settings_modal: false,
             dark_mode: false,
             notification: None,
+            show_citation_finder: false,
         }
     }
 }
@@ -469,4 +514,130 @@ pub fn get_slash_categories() -> Vec<SlashCategory> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    fn make_block(id: usize, content: &str) -> Block {
+        Block {
+            id,
+            block_type: BlockType::Paragraph,
+            content: content.to_string(),
+            prev: None,
+            next: None,
+        }
+    }
+
+    fn buffer_with_blocks(count: usize) -> Buffer {
+        let mut buf = Buffer::new();
+        for i in 0..count {
+            buf.push_back(make_block(i, &format!("block {}", i)));
+        }
+        buf
+    }
+
+    #[test]
+    fn test_insert_after_at_end_with_no_focus() {
+        let mut buf = buffer_with_blocks(2);
+        let new_block = make_block(5, "citation");
+        let id = buf.insert_after(new_block, None);
+        assert_eq!(id, 5);
+        let vec = buf.to_vec();
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec[0].content, "block 0");
+        assert_eq!(vec[1].content, "block 1");
+        assert_eq!(vec[2].content, "citation");
+        assert_eq!(vec[2].prev, Some(1));
+        assert_eq!(vec[1].next, Some(5));
+    }
+
+    #[test]
+    fn test_insert_after_specific_block() {
+        let mut buf = buffer_with_blocks(3);
+        let new_block = make_block(10, "citation");
+        let id = buf.insert_after(new_block, Some(0));
+        assert_eq!(id, 10);
+        let vec = buf.to_vec();
+        assert_eq!(vec.len(), 4);
+        assert_eq!(vec[0].content, "block 0");
+        assert_eq!(vec[1].content, "citation");
+        assert_eq!(vec[2].content, "block 1");
+        assert_eq!(vec[3].content, "block 2");
+        assert_eq!(vec[0].next, Some(10));
+        assert_eq!(vec[1].prev, Some(0));
+        assert_eq!(vec[1].next, Some(1));
+        assert_eq!(vec[2].prev, Some(10));
+    }
+
+    #[test]
+    fn test_insert_after_last_block() {
+        let mut buf = buffer_with_blocks(3);
+        let new_block = make_block(20, "citation");
+        let id = buf.insert_after(new_block, Some(2));
+        assert_eq!(id, 20);
+        let vec = buf.to_vec();
+        assert_eq!(vec.len(), 4);
+        assert_eq!(vec[3].content, "citation");
+        assert_eq!(vec[2].next, Some(20));
+        assert_eq!(vec[3].prev, Some(2));
+        assert_eq!(vec[3].next, None);
+        assert_eq!(buf.tail, Some(20));
+    }
+
+    #[test]
+    fn test_insert_after_empty_buffer() {
+        let mut buf = Buffer::new();
+        let new_block = make_block(0, "citation");
+        let id = buf.insert_after(new_block, None);
+        assert_eq!(id, 0);
+        let vec = buf.to_vec();
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec[0].content, "citation");
+        assert_eq!(buf.head, Some(0));
+        assert_eq!(buf.tail, Some(0));
+    }
+
+    #[test]
+    fn test_insert_after_maintains_linked_list_integrity() {
+        let mut buf = buffer_with_blocks(5);
+        let new_block = make_block(99, "new");
+        buf.insert_after(new_block, Some(2));
+
+        let mut ids = Vec::new();
+        let mut cur = buf.head;
+        while let Some(id) = cur {
+            ids.push(id);
+            cur = buf.blocks.get(&id).and_then(|b| b.next);
+        }
+        assert_eq!(ids, vec![0, 1, 2, 99, 3, 4]);
+
+        let mut prev_ids = Vec::new();
+        let mut cur = buf.tail;
+        while let Some(id) = cur {
+            prev_ids.push(id);
+            cur = buf.blocks.get(&id).and_then(|b| b.prev);
+        }
+        prev_ids.reverse();
+        assert_eq!(prev_ids, vec![0, 1, 2, 99, 3, 4]);
+    }
+
+    #[test]
+    fn test_insert_after_focused_block_flow() {
+        let mut buf = buffer_with_blocks(2);
+        let focused_id = Some(0usize);
+
+        let insert_after = focused_id.and_then(|fid| {
+            None // simulate no match
+        });
+
+        let new_block = make_block(10, "citation");
+        buf.insert_after(new_block, insert_after);
+
+        let vec = buf.to_vec();
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec[2].content, "citation");
+    }
 }

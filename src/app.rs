@@ -10,6 +10,7 @@ use yew::prelude::*;
 use yewdux::prelude::*;
 
 use crate::block::BlockComponent;
+use crate::citation_finder::CitationFinder;
 use crate::ipc::*;
 use crate::models::*;
 use crate::slash_menu::SlashMenu;
@@ -477,6 +478,62 @@ pub fn app() -> Html {
         })
     };
 
+    let toggle_citation_finder = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            dispatch.reduce_mut(move |state| {
+                state.show_citation_finder = !state.show_citation_finder;
+            });
+        })
+    };
+
+    let close_citation_finder = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |_| {
+            dispatch.reduce_mut(move |state| {
+                state.show_citation_finder = false;
+            });
+        })
+    };
+
+    let insert_citation = {
+        let dispatch = dispatch.clone();
+        Callback::from(move |citation: String| {
+            web_sys::console::log_1(&format!("[app] insert_citation called: '{}'", citation).into());
+            dispatch.reduce_mut(move |state| {
+                web_sys::console::log_1(&"[app] reduce_mut running".into());
+                if let Some(tab) = state.tabs.iter_mut().find(|t| t.id == state.active_tab_id) {
+                    let new_block_id = state.next_block_id;
+                    state.next_block_id += 1;
+
+                    let mut new_block = Block::new(new_block_id, BlockType::Paragraph);
+                    new_block.content = citation;
+
+                    let after_id = state.focused_block_id
+                        .filter(|&fid| tab.block_order.contains(&fid));
+
+                    let insertion_pos = after_id.and_then(|fid| {
+                        tab.block_order.iter().position(|&id| id == fid)
+                    });
+
+                    let new_id = tab.buffer.insert_after(new_block, after_id);
+
+                    if let Some(pos) = insertion_pos {
+                        tab.block_order.insert(pos + 1, new_id);
+                    } else {
+                        tab.block_order.push(new_id);
+                    }
+
+                    web_sys::console::log_1(&format!("[app] block inserted: id={}, order len={}", new_id, tab.block_order.len()).into());
+                    state.focused_block_id = Some(new_id);
+                } else {
+                    web_sys::console::log_1(&"[app] ERROR: active tab not found!".into());
+                }
+                state.show_citation_finder = false;
+            });
+        })
+    };
+
     let handle_enter = {
         let dispatch = dispatch.clone();
         Callback::from(move |block_id: usize| {
@@ -661,6 +718,9 @@ pub fn app() -> Html {
                 </div>
                 <button class="new-tab-btn" onclick={add_tab}>
                     {"+"}
+                </button>
+                <button class="citation-finder-btn" onclick={toggle_citation_finder.clone()}>
+                    <span class="citation-finder-btn-icon">{"\u{1F50D}"}</span>
                 </button>
             </div>
 
@@ -931,6 +991,17 @@ pub fn app() -> Html {
                             </div>
                         </div>
                     </div>
+                }
+            } else {
+                html! {}
+            }}
+
+            {if state.show_citation_finder {
+                html! {
+                    <CitationFinder
+                        on_insert={insert_citation.clone()}
+                        on_close={close_citation_finder.clone()}
+                    />
                 }
             } else {
                 html! {}

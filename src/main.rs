@@ -1,5 +1,6 @@
 mod app;
 mod block;
+mod citation_finder;
 mod ipc;
 mod models;
 mod slash_menu;
